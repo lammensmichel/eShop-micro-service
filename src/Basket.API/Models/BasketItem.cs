@@ -1,4 +1,4 @@
-namespace WebApp.Models;
+namespace Basket.API.Models;
 
 public class BasketItem
 {
@@ -7,11 +7,4 @@ public class BasketItem
     public decimal UnitPrice { get; set; }
     public int Quantity { get; set; }
     public decimal TotalPrice => UnitPrice * Quantity;
-}
-
-public class CustomerBasket
-{
-    public string BuyerId { get; set; } = string.Empty;
-    public List<BasketItem> Items { get; set; } = [];
-    public decimal TotalPrice => Items.Sum(i => i.TotalPrice);
 }
