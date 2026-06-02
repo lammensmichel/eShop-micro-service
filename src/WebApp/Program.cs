@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using WebApp;
+using WebApp.Services;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
@@ -38,6 +39,8 @@ builder.Services.AddHttpClient("OrderingAPI", client =>
             authorizedUrls: new[] { orderingApiUrl },
             scopes: new[] { "eshop" }));
 
+builder.Services.AddScoped<BuyerIdProvider>();
+
 builder.Services.AddOidcAuthentication(options =>
 {
     options.ProviderOptions.Authority = identityApiUrl;
@@ -46,6 +49,9 @@ builder.Services.AddOidcAuthentication(options =>
     options.ProviderOptions.DefaultScopes.Add("eshop");
     options.ProviderOptions.DefaultScopes.Add("roles");
     options.AuthenticationPaths.LogOutSucceededPath = "";
-});
+    // Les rôles sont émis dans le claim "role" -> aligne IsInRole / AuthorizeView Roles.
+    options.UserOptions.RoleClaim = "role";
+})
+.AddAccountClaimsPrincipalFactory<RolesClaimsPrincipalFactory>();
 
 await builder.Build().RunAsync();

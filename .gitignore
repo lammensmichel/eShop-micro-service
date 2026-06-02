@@ -1,0 +1,26 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+
+# .NET
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+project.lock.json
+artifacts/
+
+# Aspire / IdentityServer signing keys (secrets — régénérés au démarrage en dev)
+**/keys/
+*.signing-key.json
+is-signing-key-*.json
+
+# Rider / VS / VS Code
+.idea/
+.vs/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

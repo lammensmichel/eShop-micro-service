@@ -1,5 +1,7 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
@@ -40,6 +42,39 @@ public static class Extensions
         // {
         //     options.AllowedSchemes = ["https"];
         // });
+
+        return builder;
+    }
+
+    // Configure la validation des jetons JWT (Bearer) émis par Identity.API.
+    // L'URL d'Identity est fournie par l'AppHost via la variable d'environnement
+    // "Identity__Url" (clé de config "Identity:Url"), ce qui garantit que l'authority
+    // validée ici est la même que l'issuer vu par le front -> les jetons sont acceptés.
+    // Si la clé n'est pas configurée, l'authentification n'est pas activée (le service
+    // peut alors tourner seul, sans Identity).
+    public static TBuilder AddDefaultAuthentication<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
+    {
+        var identityUrl = builder.Configuration["Identity:Url"];
+        if (string.IsNullOrEmpty(identityUrl))
+        {
+            return builder;
+        }
+
+        builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.Authority = identityUrl;
+                // localhost en dev : autorise la récupération des métadonnées sans exiger HTTPS strict.
+                options.RequireHttpsMetadata = false;
+                // Aucune ApiResource n'est définie dans Identity.API (uniquement des ApiScopes),
+                // donc le jeton ne porte pas de claim "aud" -> on ne valide pas l'audience.
+                options.TokenValidationParameters.ValidateAudience = false;
+                // Aligne les claims sur ceux émis par CustomProfileService.
+                options.TokenValidationParameters.NameClaimType = "name";
+                options.TokenValidationParameters.RoleClaimType = "role";
+            });
+
+        builder.Services.AddAuthorization();
 
         return builder;
     }

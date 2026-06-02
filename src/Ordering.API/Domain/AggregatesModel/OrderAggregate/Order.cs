@@ -44,6 +44,8 @@ public class Order : Entity, IAggregateRoot
             throw new InvalidOperationException("Cannot ship an order that is not awaiting validation");
 
         Status = OrderStatus.Shipped;
+
+        AddDomainEvent(new OrderShippedDomainEvent(this));
     }
 
     public void Cancel()
@@ -52,6 +54,8 @@ public class Order : Entity, IAggregateRoot
             throw new InvalidOperationException("Cannot cancel a shipped order");
 
         Status = OrderStatus.Cancelled;
+
+        AddDomainEvent(new OrderCancelledDomainEvent(this));
     }
 
     public void SetAwaitingValidation()

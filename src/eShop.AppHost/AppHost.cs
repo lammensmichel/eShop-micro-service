@@ -13,25 +13,32 @@ var catalogDb = postgres.AddDatabase("catalogdb");
 var orderingDb = postgres.AddDatabase("orderingdb");
 var identityDb = postgres.AddDatabase("identitydb");
 
+// Identity est déclaré en premier : son endpoint HTTPS est injecté dans les autres
+// APIs (Identity__Url) pour la validation des jetons JWT.
+var identityApi = builder.AddProject<Projects.Identity_API>("identity-api")
+    .WithReference(identityDb)
+    .WaitFor(identityDb);
+
+var identityEndpoint = identityApi.GetEndpoint("https");
+
 var catalogApi = builder.AddProject<Projects.Catalog_API>("catalog-api")
     .WithReference(catalogDb)
+    .WithEnvironment("Identity__Url", identityEndpoint)
     .WaitFor(catalogDb);
 
 var basketApi = builder.AddProject<Projects.Basket_API>("basket-api")
     .WithReference(redis)
     .WithReference(rabbitmq)
+    .WithEnvironment("Identity__Url", identityEndpoint)
     .WaitFor(redis)
     .WaitFor(rabbitmq);
 
 var orderingApi = builder.AddProject<Projects.Ordering_API>("ordering-api")
     .WithReference(orderingDb)
     .WithReference(rabbitmq)
+    .WithEnvironment("Identity__Url", identityEndpoint)
     .WaitFor(orderingDb)
     .WaitFor(rabbitmq);
-
-var identityApi = builder.AddProject<Projects.Identity_API>("identity-api")
-    .WithReference(identityDb)
-    .WaitFor(identityDb);
 
 var webApp = builder.AddProject<Projects.WebApp_Server>("webapp")
     .WithReference(catalogApi)

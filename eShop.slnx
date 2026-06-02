@@ -10,4 +10,7 @@
     <Project Path="src/WebApp.Server/WebApp.Server.csproj" />
     <Project Path="src/WebApp/WebApp.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ordering.UnitTests/Ordering.UnitTests.csproj" />
+  </Folder>
 </Solution>

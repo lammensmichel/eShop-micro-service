@@ -2,6 +2,7 @@
 
 @attribute [Authorize]
 @inject IHttpClientFactory HttpClientFactory
+@inject BuyerIdProvider BuyerIdProvider
 
 <h1>🛒 Mon Panier</h1>
 
@@ -59,8 +60,14 @@ else
     {
         try
         {
+            var buyerId = await BuyerIdProvider.GetBuyerIdAsync();
             var client = HttpClientFactory.CreateClient("BasketAPI");
-            _basket = await client.GetFromJsonAsync<BasketDto>("/api/basket/user1");
+            _basket = await client.GetFromJsonAsync<BasketDto>($"/api/basket/{buyerId}");
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
         }
         catch (Exception ex)
         {
@@ -72,10 +79,11 @@ else
     {
         try
         {
+            var buyerId = await BuyerIdProvider.GetBuyerIdAsync();
             var client = HttpClientFactory.CreateClient("BasketAPI");
-            await client.PostAsJsonAsync("/api/basket/checkout", new
+            var response = await client.PostAsJsonAsync("/api/basket/checkout", new
             {
-                buyerId = "user1",
+                buyerId,
                 city = "Brussels",
                 street = "Rue de la Loi 1",
                 country = "Belgium",
@@ -84,27 +92,18 @@ else
                 cardHolderName = "User",
                 cardExpiration = "2027-01-01"
             });
+            response.EnsureSuccessStatusCode();
             _message = "🎉 Commande passée avec succès !";
-            _basket = new BasketDto { BuyerId = "user1" };
+            _basket = new BasketDto { BuyerId = buyerId };
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
         }
         catch (Exception ex)
         {
             _error = ex.Message;
         }
-    }
-
-    class BasketDto
-    {
-        public string BuyerId { get; set; } = string.Empty;
-        public List<BasketItemDto> Items { get; set; } = [];
-        public decimal TotalPrice => Items.Sum(i => i.TotalPrice);
-    }
-    class BasketItemDto
-    {
-        public int ProductId { get; set; }
-        public string ProductName { get; set; } = string.Empty;
-        public decimal UnitPrice { get; set; }
-        public int Quantity { get; set; }
-        public decimal TotalPrice => UnitPrice * Quantity;
     }
 }

@@ -82,44 +82,63 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var client = HttpClientFactory.CreateClient("CatalogAPI");
-        _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
-        _brands = await client.GetFromJsonAsync<List<BrandDto>>("/api/catalog/brands") ?? [];
-        _types = await client.GetFromJsonAsync<List<TypeDto>>("/api/catalog/types") ?? [];
-        if (_brands.Any()) _brandId = _brands[0].Id;
-        if (_types.Any()) _typeId = _types[0].Id;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CatalogAPI");
+            _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+            _brands = await client.GetFromJsonAsync<List<BrandDto>>("/api/catalog/brands") ?? [];
+            _types = await client.GetFromJsonAsync<List<TypeDto>>("/api/catalog/types") ?? [];
+            if (_brands.Any()) _brandId = _brands[0].Id;
+            if (_types.Any()) _typeId = _types[0].Id;
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
+        }
     }
 
     private async Task AddProduct()
     {
-        var client = HttpClientFactory.CreateClient("CatalogAPI");
-        var newItem = new
+        try
         {
-            name = _name,
-            description = _description,
-            price = _price,
-            pictureFileName = "default.png",
-            availableStock = _stock,
-            catalogBrandId = _brandId,
-            catalogTypeId = _typeId
-        };
-        await client.PostAsJsonAsync("/api/catalog/items", newItem);
-        _message = $"✅ {_name} ajouté !";
-        _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
-        _name = string.Empty;
-        _description = string.Empty;
+            var client = HttpClientFactory.CreateClient("CatalogAPI");
+            var newItem = new
+            {
+                name = _name,
+                description = _description,
+                price = _price,
+                pictureFileName = "default.png",
+                availableStock = _stock,
+                catalogBrandId = _brandId,
+                catalogTypeId = _typeId
+            };
+            await client.PostAsJsonAsync("/api/catalog/items", newItem);
+            _message = $"✅ {_name} ajouté !";
+            _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+            _name = string.Empty;
+            _description = string.Empty;
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
+        }
     }
 
     private async Task DeleteProduct(int id)
     {
-        var client = HttpClientFactory.CreateClient("CatalogAPI");
-        await client.DeleteAsync($"/api/catalog/items/{id}");
-        _items = _items?.Where(i => i.Id != id).ToList();
-        _message = "✅ Produit supprimé !";
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CatalogAPI");
+            await client.DeleteAsync($"/api/catalog/items/{id}");
+            _items = _items?.Where(i => i.Id != id).ToList();
+            _message = "✅ Produit supprimé !";
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
+        }
     }
-
-    record CatalogItemDto(int Id, string Name, string Description, decimal Price,
-        int AvailableStock, BrandDto? CatalogBrand, TypeDto? CatalogType);
-    record BrandDto(int Id, string Name);
-    record TypeDto(int Id, string Type);
 }

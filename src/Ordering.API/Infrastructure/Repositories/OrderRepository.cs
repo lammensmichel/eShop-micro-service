@@ -1,3 +1,4 @@
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Ordering.API.Domain.AggregatesModel.OrderAggregate;
 using Ordering.API.Domain.SeedWork;
@@ -8,9 +9,12 @@ public class OrderRepository : IRepository<Order>
 {
     private readonly OrderingDbContext _context;
 
-    public OrderRepository(OrderingDbContext context)
+    public OrderRepository(OrderingDbContext context, IMediator mediator)
     {
         _context = context;
+        // Renseigne le médiateur sur le contexte (mis en pool) pour activer
+        // le dispatch automatique des domain events lors de SaveChangesAsync (point 5).
+        _context.Mediator = mediator;
     }
 
     public async Task<Order?> GetAsync(int id)

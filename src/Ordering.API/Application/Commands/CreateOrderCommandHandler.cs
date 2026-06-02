@@ -7,12 +7,10 @@ namespace Ordering.API.Application.Commands;
 public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, int>
 {
     private readonly IRepository<Order> _orderRepository;
-    private readonly IMediator _mediator;
 
-    public CreateOrderCommandHandler(IRepository<Order> orderRepository, IMediator mediator)
+    public CreateOrderCommandHandler(IRepository<Order> orderRepository)
     {
         _orderRepository = orderRepository;
-        _mediator = mediator;
     }
 
     public async Task<int> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
@@ -30,13 +28,10 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, int
         var order = new Order(request.BuyerId, address, items);
 
         _orderRepository.Add(order);
+
+        // Le dispatch des Domain Events est désormais automatique :
+        // il est déclenché par l'override de SaveChangesAsync du OrderingDbContext.
         await _orderRepository.SaveChangesAsync();
-
-        // Dispatch les Domain Events
-        foreach (var domainEvent in order.DomainEvents)
-            await _mediator.Publish(domainEvent, cancellationToken);
-
-        order.ClearDomainEvents();
 
         return order.Id;
     }

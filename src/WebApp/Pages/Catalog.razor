@@ -1,7 +1,7 @@
 @page "/catalog"
 @attribute [Authorize]
 @inject IHttpClientFactory HttpClientFactory
-@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject BuyerIdProvider BuyerIdProvider
 
 <h1>📦 Catalogue</h1>
 
@@ -43,18 +43,17 @@ else
     private string? _message;
     private string? _error;
 
-    private async Task<string> GetBuyerId()
-    {
-        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        return authState.User.FindFirst("sub")?.Value ?? "anonymous";
-    }
-
     protected override async Task OnInitializedAsync()
     {
         try
         {
             var client = HttpClientFactory.CreateClient("CatalogAPI");
             _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
         }
         catch (Exception ex)
         {
@@ -66,7 +65,7 @@ else
     {
         try
         {
-            var buyerId = await GetBuyerId();
+            var buyerId = await BuyerIdProvider.GetBuyerIdAsync();
             var client = HttpClientFactory.CreateClient("BasketAPI");
 
             var basket = await client.GetFromJsonAsync<BasketDto>($"/api/basket/{buyerId}")
@@ -85,32 +84,21 @@ else
                 });
 
             basket.BuyerId = buyerId;
-            await client.PostAsJsonAsync("/api/basket", basket);
+            var response = await client.PostAsJsonAsync("/api/basket", basket);
+            response.EnsureSuccessStatusCode();
 
             _message = $"✅ {item.Name} ajouté au panier !";
             await Task.Delay(2000);
             _message = null;
         }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
+        }
         catch (Exception ex)
         {
             _error = ex.Message;
         }
-    }
-
-    record CatalogItemDto(int Id, string Name, string Description, decimal Price,
-        BrandDto? CatalogBrand, TypeDto? CatalogType);
-    record BrandDto(string Name);
-    record TypeDto(string Type);
-    class BasketDto
-    {
-        public string BuyerId { get; set; } = string.Empty;
-        public List<BasketItemDto> Items { get; set; } = [];
-    }
-    class BasketItemDto
-    {
-        public int ProductId { get; set; }
-        public string ProductName { get; set; } = string.Empty;
-        public decimal UnitPrice { get; set; }
-        public int Quantity { get; set; }
     }
 }

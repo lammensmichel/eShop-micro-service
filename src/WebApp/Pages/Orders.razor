@@ -1,6 +1,7 @@
 @page "/orders"
 @attribute [Authorize]
 @inject IHttpClientFactory HttpClientFactory
+@inject BuyerIdProvider BuyerIdProvider
 
 <h1>📋 Mes Commandes</h1>
 
@@ -42,16 +43,18 @@ else
     {
         try
         {
+            var buyerId = await BuyerIdProvider.GetBuyerIdAsync();
             var client = HttpClientFactory.CreateClient("OrderingAPI");
-            _orders = await client.GetFromJsonAsync<List<OrderDto>>("/api/orders/user1");
+            _orders = await client.GetFromJsonAsync<List<OrderDto>>($"/api/orders/{buyerId}");
+        }
+        catch (AccessTokenNotAvailableException ex)
+        {
+            // Jeton expiré : on redirige vers la connexion.
+            ex.Redirect();
         }
         catch (Exception ex)
         {
             _error = ex.Message;
         }
     }
-
-    record OrderDto(int Id, string BuyerId, string Status, decimal Total,
-        DateTime OrderDate, List<OrderItemDto> Items);
-    record OrderItemDto(int ProductId, string ProductName, decimal UnitPrice, int Units);
 }
