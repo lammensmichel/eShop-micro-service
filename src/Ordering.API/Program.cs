@@ -8,7 +8,9 @@ using Ordering.API.Domain.AggregatesModel.OrderAggregate;
 using Ordering.API.Domain.SeedWork;
 using Ordering.API.Infrastructure;
 using Ordering.API.Infrastructure.Messaging;
+using Ordering.API.Infrastructure.Outbox;
 using Ordering.API.Infrastructure.Repositories;
+using eShop.IntegrationEvents.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,6 +48,12 @@ builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBeh
 
 builder.Services.AddScoped<IRepository<Order>, OrderRepository>();
 builder.Services.AddHostedService<RabbitMQConsumer>();
+
+// Pattern Outbox : bus partagé RabbitMQ + service du journal d'événements d'intégration
+// + publisher de fond qui republie de façon fiable les entrées en attente.
+builder.Services.AddRabbitMQEventBus(builder.Configuration.GetConnectionString("rabbitmq")!);
+builder.Services.AddScoped<IIntegrationEventLogService, IntegrationEventLogService>();
+builder.Services.AddHostedService<IntegrationEventLogPublisher>();
 
 // Health checks (point 12) : le check de la base est déjà ajouté par AddNpgsqlDbContext ;
 // on complète avec un check RabbitMQ.

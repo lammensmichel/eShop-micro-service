@@ -8,6 +8,8 @@ public class OrderStatus : ValueObject
     public static readonly OrderStatus AwaitingValidation = new(2, nameof(AwaitingValidation).ToLower());
     public static readonly OrderStatus Shipped = new(3, nameof(Shipped).ToLower());
     public static readonly OrderStatus Cancelled = new(4, nameof(Cancelled).ToLower());
+    public static readonly OrderStatus StockConfirmed = new(5, nameof(StockConfirmed).ToLower());
+    public static readonly OrderStatus Paid = new(6, nameof(Paid).ToLower());
 
     public int Id { get; }
     public string Name { get; }

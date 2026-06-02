@@ -1,11 +1,12 @@
+using eShop.IntegrationEvents.Messaging;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Basket.API.Messaging;
 
 /// <summary>
 /// Health check RabbitMQ (point 12) : réutilise la connexion partagée du
-/// <see cref="RabbitMQPublisher"/> et tente d'ouvrir un channel. Aucun appel
-/// bloquant : tout est asynchrone.
+/// <see cref="RabbitMQPublisher"/> (résolu depuis la lib partagée) et tente
+/// d'ouvrir un channel. Aucun appel bloquant : tout est asynchrone.
 /// </summary>
 public class RabbitMQHealthCheck : IHealthCheck
 {

@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using RabbitMQ.Client;
 
-namespace Basket.API.Messaging;
+namespace eShop.IntegrationEvents.Messaging;
 
 /// <summary>
 /// Publisher RabbitMQ robuste : la connexion est partagée et réutilisée (ouverte
@@ -10,7 +10,7 @@ namespace Basket.API.Messaging;
 /// est créé puis disposé à chaque publication. Les channels RabbitMQ ne sont PAS
 /// thread-safe : en ouvrir un par appel évite tout partage concurrent.
 /// </summary>
-public class RabbitMQPublisher : IAsyncDisposable
+public class RabbitMQPublisher : IEventBus, IAsyncDisposable
 {
     private readonly string _connectionString;
     private const string ExchangeName = "eshop_event_bus";
@@ -25,7 +25,7 @@ public class RabbitMQPublisher : IAsyncDisposable
         _connectionString = connectionString;
     }
 
-    public async Task PublishAsync<T>(T message, string routingKey)
+    public async Task PublishAsync<T>(T message, string routingKey) where T : IntegrationEvent
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -70,7 +70,7 @@ public class RabbitMQPublisher : IAsyncDisposable
 
     /// <summary>
     /// Vérifie que la connexion RabbitMQ peut être ouverte et qu'un channel peut y
-    /// être créé. Utilisé par le health check (point 12).
+    /// être créé. Utilisé par le health check.
     /// </summary>
     public async Task CheckConnectionAsync(CancellationToken cancellationToken = default)
     {

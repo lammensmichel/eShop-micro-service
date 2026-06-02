@@ -38,10 +38,30 @@ public class Order : Entity, IAggregateRoot
         AddDomainEvent(new OrderPlacedDomainEvent(this));
     }
 
-    public void Ship()
+    public void SetStockConfirmed()
     {
         if (Status != OrderStatus.AwaitingValidation)
-            throw new InvalidOperationException("Cannot ship an order that is not awaiting validation");
+            throw new InvalidOperationException("Order must be awaiting validation first");
+
+        Status = OrderStatus.StockConfirmed;
+
+        AddDomainEvent(new OrderStockConfirmedDomainEvent(this));
+    }
+
+    public void SetPaid()
+    {
+        if (Status != OrderStatus.StockConfirmed)
+            throw new InvalidOperationException("Order stock must be confirmed first");
+
+        Status = OrderStatus.Paid;
+
+        AddDomainEvent(new OrderPaidDomainEvent(this));
+    }
+
+    public void Ship()
+    {
+        if (Status != OrderStatus.Paid)
+            throw new InvalidOperationException("Cannot ship an order that is not paid");
 
         Status = OrderStatus.Shipped;
 

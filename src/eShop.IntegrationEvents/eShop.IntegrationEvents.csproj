@@ -6,4 +6,12 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Même version que celle utilisée par Basket.API : le client RabbitMQ
+         vit désormais dans cette bibliothèque partagée (socle EventBus). -->
+    <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
+    <!-- Nécessaire pour l'extension DI AddRabbitMQEventBus. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
 </Project>

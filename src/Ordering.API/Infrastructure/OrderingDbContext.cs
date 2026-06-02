@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Ordering.API.Domain.AggregatesModel.OrderAggregate;
 using Ordering.API.Domain.SeedWork;
 using Ordering.API.Infrastructure.Idempotency;
+using Ordering.API.Infrastructure.Outbox;
 
 namespace Ordering.API.Infrastructure;
 
@@ -19,6 +20,7 @@ public class OrderingDbContext : DbContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<ProcessedIntegrationEvent> ProcessedIntegrationEvents => Set<ProcessedIntegrationEvent>();
+    public DbSet<IntegrationEventLogEntry> IntegrationEventLogs => Set<IntegrationEventLogEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -31,6 +33,8 @@ public class OrderingDbContext : DbContext
                     id => id == 1 ? OrderStatus.Submitted :
                           id == 2 ? OrderStatus.AwaitingValidation :
                           id == 3 ? OrderStatus.Shipped :
+                          id == 5 ? OrderStatus.StockConfirmed :
+                          id == 6 ? OrderStatus.Paid :
                           OrderStatus.Cancelled);
             order.HasMany(o => o.OrderItems)
                 .WithOne()
@@ -47,6 +51,19 @@ public class OrderingDbContext : DbContext
         {
             e.HasKey(p => p.EventId);
             e.Property(p => p.EventId).ValueGeneratedNever();
+        });
+
+        // Journal d'événements d'intégration (outbox). La clé EventId est l'Id de
+        // l'événement, généré côté applicatif -> ValueGeneratedNever, comme l'idempotence.
+        modelBuilder.Entity<IntegrationEventLogEntry>(e =>
+        {
+            e.HasKey(l => l.EventId);
+            e.Property(l => l.EventId).ValueGeneratedNever();
+            e.Property(l => l.Content).IsRequired();
+            e.Property(l => l.EventTypeName).IsRequired();
+            e.Property(l => l.RoutingKey).IsRequired();
+            // L'enum d'état est stocké en entier (valeurs explicites NotPublished=0...).
+            e.Property(l => l.State).HasConversion<int>();
         });
     }
 

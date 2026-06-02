@@ -1,6 +1,7 @@
 using Basket.API.Apis;
 using Basket.API.Messaging;
 using Basket.API.Repositories;
+using eShop.IntegrationEvents.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,17 +34,11 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddSingleton<IBasketRepository, RedisBasketRepository>();
 
-// Point 3 — Publisher RabbitMQ robuste : la connexion est partagée et (ré)ouverte
-// de façon asynchrone (plus de .GetAwaiter().GetResult() bloquant au démarrage),
-// et un channel est créé/disposé par publication.
-builder.Services.AddSingleton<RabbitMQPublisher>(sp =>
-{
-    var config = sp.GetRequiredService<IConfiguration>();
-    var connectionString = config.GetConnectionString("rabbitmq")!;
-    return new RabbitMQPublisher(connectionString);
-});
-builder.Services.AddSingleton<IEventPublisher>(sp =>
-    new EventPublisher(sp.GetRequiredService<RabbitMQPublisher>()));
+// Point 3 — Bus d'événements RabbitMQ partagé (lib eShop.IntegrationEvents) :
+// publisher robuste, connexion partagée et (ré)ouverte de façon asynchrone, un
+// channel créé/disposé par publication. Enregistré en singleton derrière IEventBus.
+builder.Services.AddRabbitMQEventBus(
+    builder.Configuration.GetConnectionString("rabbitmq")!);
 
 // Point 12 — Health check RabbitMQ (Redis est déjà couvert par AddRedisClient).
 builder.Services.AddHealthChecks()

@@ -6,11 +6,17 @@ using Npgsql;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using eShop.IntegrationEvents.Events;
+using eShop.IntegrationEvents.Messaging;
 using Ordering.API.Application.Commands;
 using Ordering.API.Infrastructure.Idempotency;
 
 namespace Ordering.API.Infrastructure.Messaging;
 
+// Consumer unique d'Ordering : une seule queue ("ordering-events") liée à PLUSIEURS
+// routing keys de l'exchange direct partagé. Le dispatch se fait selon ea.RoutingKey :
+// chaque routing key désérialise vers son type d'event et envoie la commande/transition
+// MediatR correspondante. Idempotence, DLQ, compteur de tentatives, prefetch=1, ack/nack
+// et transaction (CreateExecutionStrategy + BeginTransaction) sont conservés à l'identique.
 public class RabbitMQConsumer : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
@@ -20,13 +26,28 @@ public class RabbitMQConsumer : BackgroundService
     private IChannel? _channel;
 
     private const string ExchangeName = "eshop_event_bus";
-    private const string QueueName = "ordering-basket-checkout";
-    private const string RoutingKey = "basket-checkout";
+
+    // Queue unique d'Ordering liée à toutes les routing keys consommées.
+    private const string QueueName = "ordering-events";
+
+    // Routing keys consommées par Ordering (saga Chantier B + checkout existant).
+    private const string BasketCheckoutRoutingKey = "basket-checkout";
+    private const string GracePeriodConfirmedRoutingKey = "ordering-grace-period-confirmed";
+    private const string PaymentSucceededRoutingKey = "payment-succeeded";
+    private const string PaymentFailedRoutingKey = "payment-failed";
+
+    private static readonly string[] ConsumedRoutingKeys =
+    [
+        BasketCheckoutRoutingKey,
+        GracePeriodConfirmedRoutingKey,
+        PaymentSucceededRoutingKey,
+        PaymentFailedRoutingKey
+    ];
 
     // Dead-letter : exchange + queue dédiés pour isoler les messages "poison".
     private const string DeadLetterExchangeName = "eshop_event_bus_dlx";
-    private const string DeadLetterQueueName = "ordering-basket-checkout-dlq";
-    private const string DeadLetterRoutingKey = "basket-checkout-dead";
+    private const string DeadLetterQueueName = "ordering-events-dlq";
+    private const string DeadLetterRoutingKey = "ordering-events-dead";
 
     // Nombre maximal de tentatives avant de router vers la DLQ.
     private const int MaxRetries = 3;
@@ -97,11 +118,15 @@ public class RabbitMQConsumer : BackgroundService
             arguments: queueArguments,
             cancellationToken: stoppingToken);
 
-        await _channel.QueueBindAsync(
-            queue: QueueName,
-            exchange: ExchangeName,
-            routingKey: RoutingKey,
-            cancellationToken: stoppingToken);
+        // Liaison de la queue unique sur TOUTES les routing keys consommées.
+        foreach (var routingKey in ConsumedRoutingKeys)
+        {
+            await _channel.QueueBindAsync(
+                queue: QueueName,
+                exchange: ExchangeName,
+                routingKey: routingKey,
+                cancellationToken: stoppingToken);
+        }
 
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += OnMessageReceivedAsync;
@@ -118,33 +143,36 @@ public class RabbitMQConsumer : BackgroundService
     private async Task OnMessageReceivedAsync(object sender, BasicDeliverEventArgs ea)
     {
         var channel = _channel!;
+        var routingKey = ea.RoutingKey;
         var body = ea.Body.ToArray();
         var json = Encoding.UTF8.GetString(body);
 
-        BasketCheckoutEvent? checkoutEvent;
-        try
+        if (!ConsumedRoutingKeys.Contains(routingKey))
         {
-            checkoutEvent = JsonSerializer.Deserialize<BasketCheckoutEvent>(json);
-        }
-        catch (Exception ex)
-        {
-            // Message non désérialisable : échec déterministe -> dead-letter immédiat.
-            _logger.LogError(ex, "BasketCheckoutEvent illisible, envoi en dead-letter");
+            // Routing key inattendue : échec déterministe -> dead-letter immédiat.
+            _logger.LogWarning("Routing key {RoutingKey} inattendue, envoi en dead-letter", routingKey);
             await channel.BasicNackAsync(ea.DeliveryTag, false, requeue: false);
             return;
         }
 
-        if (checkoutEvent is null)
+        // Désérialise l'event vers son type concret selon la routing key, et extrait son Id
+        // (clé d'idempotence). En cas d'échec déterministe (illisible/null) -> dead-letter.
+        Guid eventId;
+        Func<OrderingDbContext, IMediator, Task> process;
+        try
         {
-            _logger.LogWarning("BasketCheckoutEvent null, envoi en dead-letter");
+            (eventId, process) = BuildHandler(routingKey, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Message {RoutingKey} illisible, envoi en dead-letter", routingKey);
             await channel.BasicNackAsync(ea.DeliveryTag, false, requeue: false);
             return;
         }
 
         _logger.LogInformation(
-            "Received BasketCheckoutEvent {EventId} for buyer {BuyerId}",
-            checkoutEvent.Id,
-            checkoutEvent.BuyerId);
+            "Received event {EventId} on routing key {RoutingKey}",
+            eventId, routingKey);
 
         try
         {
@@ -154,18 +182,18 @@ public class RabbitMQConsumer : BackgroundService
 
             // Idempotence : si l'événement a déjà été traité, on acquitte sans rejouer.
             var alreadyProcessed = await dbContext.ProcessedIntegrationEvents
-                .AnyAsync(p => p.EventId == checkoutEvent.Id);
+                .AnyAsync(p => p.EventId == eventId);
 
             if (alreadyProcessed)
             {
                 _logger.LogInformation(
-                    "BasketCheckoutEvent {EventId} déjà traité, message ignoré (idempotence)",
-                    checkoutEvent.Id);
+                    "Event {EventId} déjà traité, message ignoré (idempotence)",
+                    eventId);
                 await channel.BasicAckAsync(ea.DeliveryTag, false);
                 return;
             }
 
-            await ProcessEventAsync(dbContext, mediator, checkoutEvent);
+            await ProcessEventAsync(dbContext, mediator, eventId, process);
 
             await channel.BasicAckAsync(ea.DeliveryTag, false);
         }
@@ -175,13 +203,13 @@ public class RabbitMQConsumer : BackgroundService
             // (violation d'unicité Postgres 23505). L'événement est donc déjà traité ->
             // on acquitte de façon idempotente plutôt que de requeue inutilement.
             _logger.LogInformation(
-                "BasketCheckoutEvent {EventId} déjà traité (violation d'unicité concurrente), ack idempotent",
-                checkoutEvent.Id);
+                "Event {EventId} déjà traité (violation d'unicité concurrente), ack idempotent",
+                eventId);
             await channel.BasicAckAsync(ea.DeliveryTag, false);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erreur de traitement du BasketCheckoutEvent {EventId}", checkoutEvent.Id);
+            _logger.LogError(ex, "Erreur de traitement de l'event {EventId} ({RoutingKey})", eventId, routingKey);
 
             // Stratégie anti poison-message : on compte les tentatives via un en-tête
             // applicatif (x-retry-count) republié à chaque réessai. Sous le seuil, on
@@ -191,8 +219,8 @@ public class RabbitMQConsumer : BackgroundService
             if (retryCount >= MaxRetries)
             {
                 _logger.LogWarning(
-                    "BasketCheckoutEvent {EventId} dépasse {MaxRetries} tentatives, envoi en dead-letter",
-                    checkoutEvent.Id, MaxRetries);
+                    "Event {EventId} dépasse {MaxRetries} tentatives, envoi en dead-letter",
+                    eventId, MaxRetries);
                 await channel.BasicNackAsync(ea.DeliveryTag, false, requeue: false);
             }
             else
@@ -203,7 +231,69 @@ public class RabbitMQConsumer : BackgroundService
         }
     }
 
-    // Republie le message sur l'exchange principal en incrémentant l'en-tête de tentatives.
+    // Désérialise vers le bon type d'event selon la routing key et retourne l'Id
+    // (idempotence) + l'action de traitement (commande/transition via MediatR).
+    private static (Guid EventId, Func<OrderingDbContext, IMediator, Task> Process) BuildHandler(
+        string routingKey, string json)
+    {
+        switch (routingKey)
+        {
+            case BasketCheckoutRoutingKey:
+            {
+                var evt = JsonSerializer.Deserialize<BasketCheckoutEvent>(json)
+                    ?? throw new InvalidOperationException("BasketCheckoutEvent null");
+                return (evt.Id, (db, mediator) => HandleCheckoutAsync(mediator, evt));
+            }
+            case GracePeriodConfirmedRoutingKey:
+            {
+                var evt = JsonSerializer.Deserialize<GracePeriodConfirmedIntegrationEvent>(json)
+                    ?? throw new InvalidOperationException("GracePeriodConfirmedIntegrationEvent null");
+                return (evt.Id, (db, mediator) =>
+                    mediator.Send(new ConfirmGracePeriodCommand(evt.OrderId, evt.BuyerId)));
+            }
+            case PaymentSucceededRoutingKey:
+            {
+                var evt = JsonSerializer.Deserialize<OrderPaymentSucceededIntegrationEvent>(json)
+                    ?? throw new InvalidOperationException("OrderPaymentSucceededIntegrationEvent null");
+                return (evt.Id, (db, mediator) =>
+                    mediator.Send(new ConfirmOrderPaymentCommand(evt.OrderId, evt.BuyerId)));
+            }
+            case PaymentFailedRoutingKey:
+            {
+                var evt = JsonSerializer.Deserialize<OrderPaymentFailedIntegrationEvent>(json)
+                    ?? throw new InvalidOperationException("OrderPaymentFailedIntegrationEvent null");
+                return (evt.Id, (db, mediator) =>
+                    mediator.Send(new CancelOrderPaymentCommand(evt.OrderId, evt.BuyerId)));
+            }
+            default:
+                throw new InvalidOperationException($"Routing key non gérée : {routingKey}");
+        }
+    }
+
+    // Traitement du checkout (création de commande) -> CreateOrderCommand.
+    private static async Task HandleCheckoutAsync(IMediator mediator, BasketCheckoutEvent checkoutEvent)
+    {
+        var command = new CreateOrderCommand
+        {
+            BuyerId = checkoutEvent.BuyerId,
+            City = checkoutEvent.City,
+            Street = checkoutEvent.Street,
+            Country = checkoutEvent.Country,
+            ZipCode = checkoutEvent.ZipCode,
+            Items = checkoutEvent.Items.Select(i => new CreateOrderCommandItem
+            {
+                ProductId = i.ProductId,
+                ProductName = i.ProductName,
+                UnitPrice = i.UnitPrice,
+                Quantity = i.Quantity
+            }).ToList()
+        };
+
+        await mediator.Send(command);
+    }
+
+    // Republie le message sur l'exchange principal en incrémentant l'en-tête de tentatives,
+    // en conservant la routing key d'origine (republication sur la même queue).
     private async Task RepublishWithRetryAsync(IChannel channel, BasicDeliverEventArgs ea, int retryCount)
     {
         var headers = ea.BasicProperties.Headers is null
@@ -219,7 +309,7 @@ public class RabbitMQConsumer : BackgroundService
 
         await channel.BasicPublishAsync(
             exchange: ExchangeName,
-            routingKey: RoutingKey,
+            routingKey: ea.RoutingKey,
             mandatory: false,
             basicProperties: properties,
             body: ea.Body);
@@ -248,45 +338,32 @@ public class RabbitMQConsumer : BackgroundService
         ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
 
     // Traite l'événement et enregistre la clé d'idempotence dans la MÊME transaction
-    // que la création de la commande.
+    // que le changement métier. Le traitement (process) peut envoyer une commande ou une
+    // transition via MediatR ; les SaveChangesAsync qu'elle déclenche dispatchent les
+    // domain events -> handlers qui enfilent les events d'intégration sortants dans l'outbox.
     private async Task ProcessEventAsync(
         OrderingDbContext dbContext,
         IMediator mediator,
-        BasketCheckoutEvent checkoutEvent)
+        Guid eventId,
+        Func<OrderingDbContext, IMediator, Task> process)
     {
         var strategy = dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync();
 
-            var command = new CreateOrderCommand
-            {
-                BuyerId = checkoutEvent.BuyerId,
-                City = checkoutEvent.City,
-                Street = checkoutEvent.Street,
-                Country = checkoutEvent.Country,
-                ZipCode = checkoutEvent.ZipCode,
-                Items = checkoutEvent.Items.Select(i => new CreateOrderCommandItem
-                {
-                    ProductId = i.ProductId,
-                    ProductName = i.ProductName,
-                    UnitPrice = i.UnitPrice,
-                    Quantity = i.Quantity
-                }).ToList()
-            };
-
-            var orderId = await mediator.Send(command);
+            await process(dbContext, mediator);
 
             dbContext.ProcessedIntegrationEvents.Add(new ProcessedIntegrationEvent
             {
-                EventId = checkoutEvent.Id,
+                EventId = eventId,
                 ProcessedOn = DateTime.UtcNow
             });
             await dbContext.SaveChangesAsync();
 
             await transaction.CommitAsync();
 
-            _logger.LogInformation("Order {OrderId} created successfully", orderId);
+            _logger.LogInformation("Event {EventId} traité avec succès", eventId);
         });
     }
 

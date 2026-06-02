@@ -40,6 +40,16 @@ var orderingApi = builder.AddProject<Projects.Ordering_API>("ordering-api")
     .WaitFor(orderingDb)
     .WaitFor(rabbitmq);
 
+// Workers de la chorégraphie saga (Chantier B). Ils ne dépendent que de RabbitMQ :
+// OrderProcessor applique la période de grâce, PaymentProcessor simule le paiement.
+builder.AddProject<Projects.OrderProcessor>("orderprocessor")
+    .WithReference(rabbitmq)
+    .WaitFor(rabbitmq);
+
+builder.AddProject<Projects.PaymentProcessor>("paymentprocessor")
+    .WithReference(rabbitmq)
+    .WaitFor(rabbitmq);
+
 var webApp = builder.AddProject<Projects.WebApp_Server>("webapp")
     .WithReference(catalogApi)
     .WithReference(basketApi)

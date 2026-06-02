@@ -82,10 +82,52 @@ public class OrderAggregateTests
     }
 
     [Fact]
-    public void Ship_Depuis_AwaitingValidation_Passe_En_Shipped()
+    public void SetStockConfirmed_Depuis_AwaitingValidation_Passe_En_StockConfirmed()
     {
         var order = CreateValidOrder();
         order.SetAwaitingValidation();
+
+        order.SetStockConfirmed();
+
+        Assert.Equal(OrderStatus.StockConfirmed, order.Status);
+    }
+
+    [Fact]
+    public void SetStockConfirmed_Leve_Si_Pas_AwaitingValidation()
+    {
+        var order = CreateValidOrder(); // statut Submitted
+
+        Assert.Throws<InvalidOperationException>(() => order.SetStockConfirmed());
+    }
+
+    [Fact]
+    public void SetPaid_Depuis_StockConfirmed_Passe_En_Paid()
+    {
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation();
+        order.SetStockConfirmed();
+
+        order.SetPaid();
+
+        Assert.Equal(OrderStatus.Paid, order.Status);
+    }
+
+    [Fact]
+    public void SetPaid_Leve_Si_Pas_StockConfirmed()
+    {
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation(); // statut AwaitingValidation, pas StockConfirmed
+
+        Assert.Throws<InvalidOperationException>(() => order.SetPaid());
+    }
+
+    [Fact]
+    public void Ship_Depuis_Paid_Passe_En_Shipped()
+    {
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation();
+        order.SetStockConfirmed();
+        order.SetPaid();
 
         order.Ship();
 
@@ -93,9 +135,11 @@ public class OrderAggregateTests
     }
 
     [Fact]
-    public void Ship_Leve_Si_Statut_Submitted()
+    public void Ship_Leve_Si_Statut_Pas_Paid()
     {
-        var order = CreateValidOrder(); // statut Submitted
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation();
+        order.SetStockConfirmed(); // StockConfirmed, pas encore Paid
 
         Assert.Throws<InvalidOperationException>(() => order.Ship());
     }
@@ -115,9 +159,46 @@ public class OrderAggregateTests
     {
         var order = CreateValidOrder();
         order.SetAwaitingValidation();
+        order.SetStockConfirmed();
+        order.SetPaid();
         order.Ship(); // statut Shipped
 
         Assert.Throws<InvalidOperationException>(() => order.Cancel());
+    }
+
+    [Fact]
+    public void Cancel_Depuis_StockConfirmed_Passe_En_Cancelled()
+    {
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation();
+        order.SetStockConfirmed();
+
+        order.Cancel();
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+    }
+
+    [Fact]
+    public void SetStockConfirmed_Leve_OrderStockConfirmedDomainEvent()
+    {
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation();
+
+        order.SetStockConfirmed();
+
+        Assert.Contains(order.DomainEvents, e => e is OrderStockConfirmedDomainEvent);
+    }
+
+    [Fact]
+    public void SetPaid_Leve_OrderPaidDomainEvent()
+    {
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation();
+        order.SetStockConfirmed();
+
+        order.SetPaid();
+
+        Assert.Contains(order.DomainEvents, e => e is OrderPaidDomainEvent);
     }
 
     // --- TotalPrice ---

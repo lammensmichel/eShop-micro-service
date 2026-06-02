@@ -6,6 +6,8 @@
     <ProjectReference Include="..\Ordering.API\Ordering.API.csproj" />
     <ProjectReference Include="..\Identity.API\Identity.API.csproj" />
     <ProjectReference Include="..\WebApp.Server\WebApp.Server.csproj" />
+    <ProjectReference Include="..\OrderProcessor\OrderProcessor.csproj" />
+    <ProjectReference Include="..\PaymentProcessor\PaymentProcessor.csproj" />
   </ItemGroup>
 
   <ItemGroup>

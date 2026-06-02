@@ -1,8 +1,8 @@
 using System.Security.Claims;
-using Basket.API.Messaging;
 using Basket.API.Models;
 using Basket.API.Repositories;
 using eShop.IntegrationEvents.Events;
+using eShop.IntegrationEvents.Messaging;
 
 namespace Basket.API.Apis;
 
@@ -41,7 +41,7 @@ public static class BasketApi
             BasketCheckout checkout,
             ClaimsPrincipal user,
             IBasketRepository repository,
-            IEventPublisher publisher) =>
+            IEventBus publisher) =>
         {
             var tokenBuyerId = GetBuyerId(user);
             if (tokenBuyerId is null) return Results.Unauthorized();

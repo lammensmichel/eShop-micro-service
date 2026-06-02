@@ -1,11 +1,12 @@
+using eShop.IntegrationEvents.Messaging;
+
 namespace eShop.IntegrationEvents.Events;
 
-public record BasketCheckoutEvent
+// Id (hérité de IntegrationEvent) est généré à la publication et sert de clé
+// d'idempotence côté consommateur (Ordering.API) pour éviter de créer une commande
+// en double si le message est redélivré.
+public record BasketCheckoutEvent : IntegrationEvent
 {
-    // Identifiant unique de l'événement, généré à la publication.
-    // Sert de clé d'idempotence côté consommateur (Ordering.API) pour éviter
-    // de créer une commande en double si le message est redélivré.
-    public Guid Id { get; init; } = Guid.NewGuid();
     public required string BuyerId { get; init; }
     public required string City { get; init; }
     public required string Street { get; init; }
