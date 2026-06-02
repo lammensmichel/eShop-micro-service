@@ -1,0 +1,110 @@
+@page "/basket"
+
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+
+<h1>🛒 Mon Panier</h1>
+
+@if (_error is not null)
+{
+    <p style="color:red">Erreur : @_error</p>
+}
+else if (_basket is null)
+{
+    <p>Chargement...</p>
+}
+else if (_basket.Items.Count == 0)
+{
+    <p>Votre panier est vide. <a href="/catalog">Voir le catalogue</a></p>
+}
+else
+{
+    <table class="basket-table">
+        <thead>
+            <tr>
+                <th>Produit</th>
+                <th>Prix unitaire</th>
+                <th>Quantité</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in _basket.Items)
+            {
+                <tr>
+                    <td>@item.ProductName</td>
+                    <td>@item.UnitPrice.ToString("C")</td>
+                    <td>@item.Quantity</td>
+                    <td>@item.TotalPrice.ToString("C")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <p><strong>Total : @_basket.TotalPrice.ToString("C")</strong></p>
+    <button class="checkout-btn" @onclick="Checkout">✅ Passer commande</button>
+}
+
+@if (_message is not null)
+{
+    <p class="success-msg">@_message</p>
+}
+
+@code {
+    private BasketDto? _basket;
+    private string? _message;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("BasketAPI");
+            _basket = await client.GetFromJsonAsync<BasketDto>("/api/basket/user1");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task Checkout()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("BasketAPI");
+            await client.PostAsJsonAsync("/api/basket/checkout", new
+            {
+                buyerId = "user1",
+                city = "Brussels",
+                street = "Rue de la Loi 1",
+                country = "Belgium",
+                zipCode = "1000",
+                cardNumber = "4111111111111111",
+                cardHolderName = "User",
+                cardExpiration = "2027-01-01"
+            });
+            _message = "🎉 Commande passée avec succès !";
+            _basket = new BasketDto { BuyerId = "user1" };
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    class BasketDto
+    {
+        public string BuyerId { get; set; } = string.Empty;
+        public List<BasketItemDto> Items { get; set; } = [];
+        public decimal TotalPrice => Items.Sum(i => i.TotalPrice);
+    }
+    class BasketItemDto
+    {
+        public int ProductId { get; set; }
+        public string ProductName { get; set; } = string.Empty;
+        public decimal UnitPrice { get; set; }
+        public int Quantity { get; set; }
+        public decimal TotalPrice => UnitPrice * Quantity;
+    }
+}

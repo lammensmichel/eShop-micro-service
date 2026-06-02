@@ -1,0 +1,125 @@
+@page "/admin"
+@attribute [Authorize(Roles = "Admin")]
+@inject IHttpClientFactory HttpClientFactory
+
+<h1>⚙️ Administration</h1>
+
+<h2>Ajouter un produit</h2>
+
+@if (_message is not null)
+{
+    <p class="success-msg">@_message</p>
+}
+
+<div style="display:flex; flex-direction:column; gap:0.5rem; max-width:400px;">
+    <input @bind="_name" placeholder="Nom du produit" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
+    <input @bind="_description" placeholder="Description" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
+    <input @bind="_price" type="number" placeholder="Prix" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
+    <input @bind="_stock" type="number" placeholder="Stock" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
+
+    <select @bind="_brandId" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;">
+        @foreach (var brand in _brands)
+        {
+            <option value="@brand.Id">@brand.Name</option>
+        }
+    </select>
+
+    <select @bind="_typeId" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;">
+        @foreach (var type in _types)
+        {
+            <option value="@type.Id">@type.Type</option>
+        }
+    </select>
+
+    <button @onclick="AddProduct" style="padding:0.75rem; background:#0d6efd; color:white; border:none; border-radius:8px; cursor:pointer;">
+        ➕ Ajouter le produit
+    </button>
+</div>
+
+<h2 style="margin-top:2rem;">Produits existants</h2>
+
+@if (_items is not null)
+{
+    <table class="basket-table">
+        <thead>
+            <tr>
+                <th>Nom</th>
+                <th>Prix</th>
+                <th>Stock</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in _items)
+            {
+                <tr>
+                    <td>@item.Name</td>
+                    <td>@item.Price.ToString("C")</td>
+                    <td>@item.AvailableStock</td>
+                    <td>
+                        <button @onclick="() => DeleteProduct(item.Id)"
+                            style="background:#dc3545; color:white; border:none; border-radius:4px; padding:0.3rem 0.6rem; cursor:pointer;">
+                            🗑️ Supprimer
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<CatalogItemDto>? _items;
+    private List<BrandDto> _brands = [];
+    private List<TypeDto> _types = [];
+    private string _name = string.Empty;
+    private string _description = string.Empty;
+    private decimal _price;
+    private int _stock;
+    private int _brandId;
+    private int _typeId;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var client = HttpClientFactory.CreateClient("CatalogAPI");
+        _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+        _brands = await client.GetFromJsonAsync<List<BrandDto>>("/api/catalog/brands") ?? [];
+        _types = await client.GetFromJsonAsync<List<TypeDto>>("/api/catalog/types") ?? [];
+        if (_brands.Any()) _brandId = _brands[0].Id;
+        if (_types.Any()) _typeId = _types[0].Id;
+    }
+
+    private async Task AddProduct()
+    {
+        var client = HttpClientFactory.CreateClient("CatalogAPI");
+        var newItem = new
+        {
+            name = _name,
+            description = _description,
+            price = _price,
+            pictureFileName = "default.png",
+            availableStock = _stock,
+            catalogBrandId = _brandId,
+            catalogTypeId = _typeId
+        };
+        await client.PostAsJsonAsync("/api/catalog/items", newItem);
+        _message = $"✅ {_name} ajouté !";
+        _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+        _name = string.Empty;
+        _description = string.Empty;
+    }
+
+    private async Task DeleteProduct(int id)
+    {
+        var client = HttpClientFactory.CreateClient("CatalogAPI");
+        await client.DeleteAsync($"/api/catalog/items/{id}");
+        _items = _items?.Where(i => i.Id != id).ToList();
+        _message = "✅ Produit supprimé !";
+    }
+
+    record CatalogItemDto(int Id, string Name, string Description, decimal Price,
+        int AvailableStock, BrandDto? CatalogBrand, TypeDto? CatalogType);
+    record BrandDto(int Id, string Name);
+    record TypeDto(int Id, string Type);
+}

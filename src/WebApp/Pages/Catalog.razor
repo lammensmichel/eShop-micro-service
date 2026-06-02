@@ -1,0 +1,116 @@
+@page "/catalog"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<h1>📦 Catalogue</h1>
+
+@if (_error is not null)
+{
+    <p style="color:red">Erreur : @_error</p>
+}
+else if (_items is null)
+{
+    <p>Chargement...</p>
+}
+else if (_items.Count == 0)
+{
+    <p>Aucun produit disponible.</p>
+}
+else
+{
+    <div class="catalog-grid">
+        @foreach (var item in _items)
+        {
+            <div class="catalog-card">
+                <h3>@item.Name</h3>
+                <p>@item.Description</p>
+                <p class="price">@item.Price.ToString("C")</p>
+                <span class="badge">@item.CatalogBrand?.Name — @item.CatalogType?.Type</span>
+                <button @onclick="() => AddToBasket(item)">🛒 Ajouter au panier</button>
+            </div>
+        }
+    </div>
+}
+
+@if (_message is not null)
+{
+    <p class="success-msg">@_message</p>
+}
+
+@code {
+    private List<CatalogItemDto>? _items;
+    private string? _message;
+    private string? _error;
+
+    private async Task<string> GetBuyerId()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        return authState.User.FindFirst("sub")?.Value ?? "anonymous";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("CatalogAPI");
+            _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task AddToBasket(CatalogItemDto item)
+    {
+        try
+        {
+            var buyerId = await GetBuyerId();
+            var client = HttpClientFactory.CreateClient("BasketAPI");
+
+            var basket = await client.GetFromJsonAsync<BasketDto>($"/api/basket/{buyerId}")
+                ?? new BasketDto { BuyerId = buyerId };
+
+            var existing = basket.Items.FirstOrDefault(i => i.ProductId == item.Id);
+            if (existing is not null)
+                existing.Quantity++;
+            else
+                basket.Items.Add(new BasketItemDto
+                {
+                    ProductId = item.Id,
+                    ProductName = item.Name,
+                    UnitPrice = item.Price,
+                    Quantity = 1
+                });
+
+            basket.BuyerId = buyerId;
+            await client.PostAsJsonAsync("/api/basket", basket);
+
+            _message = $"✅ {item.Name} ajouté au panier !";
+            await Task.Delay(2000);
+            _message = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    record CatalogItemDto(int Id, string Name, string Description, decimal Price,
+        BrandDto? CatalogBrand, TypeDto? CatalogType);
+    record BrandDto(string Name);
+    record TypeDto(string Type);
+    class BasketDto
+    {
+        public string BuyerId { get; set; } = string.Empty;
+        public List<BasketItemDto> Items { get; set; } = [];
+    }
+    class BasketItemDto
+    {
+        public int ProductId { get; set; }
+        public string ProductName { get; set; } = string.Empty;
+        public decimal UnitPrice { get; set; }
+        public int Quantity { get; set; }
+    }
+}

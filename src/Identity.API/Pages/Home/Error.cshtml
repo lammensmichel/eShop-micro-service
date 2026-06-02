@@ -1,0 +1,14 @@
+@page
+@model Identity.API.Pages.Home.ErrorModel
+<!DOCTYPE html>
+<html>
+<head><title>Erreur</title></head>
+<body>
+    <h1>Erreur</h1>
+    @if (Model.Error != null)
+    {
+        <p>@Model.Error.Error</p>
+        <p>@Model.Error.ErrorDescription</p>
+    }
+</body>
+</html>

@@ -1,0 +1,57 @@
+@page "/orders"
+@attribute [Authorize]
+@inject IHttpClientFactory HttpClientFactory
+
+<h1>📋 Mes Commandes</h1>
+
+@if (_error is not null)
+{
+    <p style="color:red">Erreur : @_error</p>
+}
+else if (_orders is null)
+{
+    <p>Chargement...</p>
+}
+else if (_orders.Count == 0)
+{
+    <p>Aucune commande. <a href="/catalog">Faire des achats</a></p>
+}
+else
+{
+    @foreach (var order in _orders)
+    {
+        <div class="order-card">
+            <p><strong>Commande #@order.Id</strong> <span class="status">@order.Status</span></p>
+            <p>Date : @order.OrderDate.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</p>
+            <p>Total : <strong>@order.Total.ToString("C")</strong></p>
+            <ul>
+                @foreach (var item in order.Items)
+                {
+                    <li>@item.ProductName × @item.Units — @item.UnitPrice.ToString("C")</li>
+                }
+            </ul>
+        </div>
+    }
+}
+
+@code {
+    private List<OrderDto>? _orders;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("OrderingAPI");
+            _orders = await client.GetFromJsonAsync<List<OrderDto>>("/api/orders/user1");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    record OrderDto(int Id, string BuyerId, string Status, decimal Total,
+        DateTime OrderDate, List<OrderItemDto> Items);
+    record OrderItemDto(int ProductId, string ProductName, decimal UnitPrice, int Units);
+}
