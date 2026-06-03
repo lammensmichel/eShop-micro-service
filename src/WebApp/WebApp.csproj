@@ -5,6 +5,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- Désactive le fingerprinting des assets WASM (dotnet.js, etc.) : leurs noms
+         restent STABLES (sans hash) entre deux builds. Évite que le hash dérive à
+         chaque recompilation (Hot Reload de `dotnet run`) et désynchronise le serveur
+         en cours (404 sur dotnet.<ancien-hash>.js). En dev, un hard refresh suffit
+         pour le cache navigateur. -->
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
   </PropertyGroup>
 
   <ItemGroup>
