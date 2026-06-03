@@ -9,8 +9,15 @@
 | B — Saga (domaine StockConfirmed/Paid, 4 events, consumer multi-keys, OrderProcessor, PaymentProcessor, câblage AppHost) | ✅ | build + tests |
 
 - **Build complet** : 0 erreur / 0 avertissement. **Tests** : 24/24.
-- **Validation e2e** (chorégraphie complète sous Aspire/Docker) : **non réalisée** — Docker
-  indisponible dans l'environnement de l'agent. Cohérence des routing keys vérifiée statiquement.
+- **Validation e2e** (chorégraphie complète sous Aspire/Docker) : **✅ réalisée**. Un
+  `BasketCheckoutEvent` injecté fait traverser la commande `Submitted → StockConfirmed →
+  Shipped` ; outbox tous publiés, DLQ vide. Deux bugs trouvés et corrigés au passage :
+  1. **CORS Basket** : origines de repli erronées (`:5001/:5000` au lieu de `:7204/:5274`)
+     → le panier était bloqué côté front (`No 'Access-Control-Allow-Origin'`).
+  2. **Sérialisation outbox** : le republish sérialisait l'event via le type de base
+     `IntegrationEvent`, perdant les champs dérivés (`OrderId`/`BuyerId`) → les workers
+     (champs `required`) ne pouvaient plus désérialiser → saga bloquée à `StockConfirmed`.
+     Corrigé en sérialisant via `message.GetType()`.
 - Tâche **0.3** (classe de base `RabbitMQConsumerBase` partagée) **non faite** : chaque worker
   embarque un consumer léger calqué sur celui d'Ordering (duplication assumée).
 
