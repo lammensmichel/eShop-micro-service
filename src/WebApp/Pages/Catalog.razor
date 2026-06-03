@@ -8,39 +8,63 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject BuyerIdProvider BuyerIdProvider
 
-<h1>📦 Catalogue</h1>
+<div class="page-header">
+    <h1>📦 Catalogue</h1>
+</div>
+
+@if (_message is not null)
+{
+    <div class="alert alert-success">@_message</div>
+}
 
 @if (_error is not null)
 {
-    <p style="color:red">Erreur : @_error</p>
+    <div class="alert alert-danger">Erreur : @_error</div>
 }
 else if (_items is null)
 {
-    <p>Chargement...</p>
+    <div class="loading"><span class="spinner"></span> Chargement du catalogue...</div>
 }
 else if (_items.Count == 0)
 {
-    <p>Aucun produit disponible.</p>
+    <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h3>Aucun produit disponible</h3>
+        <p>Le catalogue est actuellement vide. Revenez plus tard.</p>
+    </div>
 }
 else
 {
     <div class="catalog-grid">
         @foreach (var item in _items)
         {
-            <div class="catalog-card">
-                <h3>@item.Name</h3>
-                <p>@item.Description</p>
-                <p class="price">@item.Price.ToString("C")</p>
-                <span class="badge">@item.CatalogBrand?.Name — @item.CatalogType?.Type</span>
-                <button @onclick="() => AddToBasket(item)">🛒 Ajouter au panier</button>
+            <div class="product-card">
+                <div class="product-thumb">📦</div>
+                <div class="product-body">
+                    <h3>@item.Name</h3>
+                    <p class="product-desc">@item.Description</p>
+                    @if (item.CatalogBrand is not null || item.CatalogType is not null)
+                    {
+                        <span class="badge badge-primary">@item.CatalogBrand?.Name — @item.CatalogType?.Type</span>
+                    }
+                    <div class="product-meta">
+                        <span class="product-price">@item.Price.ToString("C")</span>
+                        @if (item.AvailableStock > 0)
+                        {
+                            <span class="badge badge-success">En stock : @item.AvailableStock</span>
+                        }
+                        else
+                        {
+                            <span class="badge badge-danger">Rupture</span>
+                        }
+                    </div>
+                    <button class="btn btn-primary btn-block" @onclick="() => AddToBasket(item)">
+                        🛒 Ajouter au panier
+                    </button>
+                </div>
             </div>
         }
     </div>
-}
-
-@if (_message is not null)
-{
-    <p class="success-msg">@_message</p>
 }
 
 @code {

@@ -7,51 +7,69 @@
 @attribute [Authorize(Roles = "Admin")]
 @inject IHttpClientFactory HttpClientFactory
 
-<h1>⚙️ Administration</h1>
-
-<h2>Ajouter un produit</h2>
+<div class="page-header">
+    <h1>⚙️ Administration</h1>
+</div>
 
 @if (_message is not null)
 {
-    <p class="success-msg">@_message</p>
+    <div class="alert @(_message.StartsWith("❌") ? "alert-danger" : "alert-success")">@_message</div>
 }
 
-<div style="display:flex; flex-direction:column; gap:0.5rem; max-width:400px;">
-    <input @bind="_name" placeholder="Nom du produit" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
-    <input @bind="_description" placeholder="Description" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
-    <input @bind="_price" type="number" placeholder="Prix" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
-    <input @bind="_stock" type="number" placeholder="Stock" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;" />
+<div class="card" style="margin-bottom: 2rem; max-width: 520px;">
+    <h2>Ajouter un produit</h2>
 
-    <select @bind="_brandId" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;">
-        @foreach (var brand in _brands)
-        {
-            <option value="@brand.Id">@brand.Name</option>
-        }
-    </select>
+    <div class="form-group">
+        <label class="form-label">Nom du produit</label>
+        <input class="form-input" @bind="_name" placeholder="Ex. T-shirt eShop" />
+    </div>
+    <div class="form-group">
+        <label class="form-label">Description</label>
+        <input class="form-input" @bind="_description" placeholder="Courte description du produit" />
+    </div>
+    <div class="form-group">
+        <label class="form-label">Prix (€)</label>
+        <input class="form-input" @bind="_price" type="number" placeholder="0.00" />
+    </div>
+    <div class="form-group">
+        <label class="form-label">Stock</label>
+        <input class="form-input" @bind="_stock" type="number" placeholder="0" />
+    </div>
+    <div class="form-group">
+        <label class="form-label">Marque</label>
+        <select class="form-select" @bind="_brandId">
+            @foreach (var brand in _brands)
+            {
+                <option value="@brand.Id">@brand.Name</option>
+            }
+        </select>
+    </div>
+    <div class="form-group">
+        <label class="form-label">Type</label>
+        <select class="form-select" @bind="_typeId">
+            @foreach (var type in _types)
+            {
+                <option value="@type.Id">@type.Type</option>
+            }
+        </select>
+    </div>
 
-    <select @bind="_typeId" style="padding:0.5rem; border:1px solid #ccc; border-radius:6px;">
-        @foreach (var type in _types)
-        {
-            <option value="@type.Id">@type.Type</option>
-        }
-    </select>
-
-    <button @onclick="AddProduct" style="padding:0.75rem; background:#0d6efd; color:white; border:none; border-radius:8px; cursor:pointer;">
+    <button class="btn btn-primary btn-block" @onclick="AddProduct">
         ➕ Ajouter le produit
     </button>
 </div>
 
-<h2 style="margin-top:2rem;">Produits existants</h2>
+<h2>Produits existants</h2>
 
 @if (_items is not null)
 {
-    <table class="basket-table">
+    <table class="table">
         <thead>
             <tr>
                 <th>Nom</th>
-                <th>Prix</th>
-                <th>Stock</th>
-                <th>Action</th>
+                <th class="text-right">Prix</th>
+                <th class="text-right">Stock</th>
+                <th class="text-right">Action</th>
             </tr>
         </thead>
         <tbody>
@@ -59,11 +77,10 @@
             {
                 <tr>
                     <td>@item.Name</td>
-                    <td>@item.Price.ToString("C")</td>
-                    <td>@item.AvailableStock</td>
-                    <td>
-                        <button @onclick="() => DeleteProduct(item.Id)"
-                            style="background:#dc3545; color:white; border:none; border-radius:4px; padding:0.3rem 0.6rem; cursor:pointer;">
+                    <td class="text-right">@item.Price.ToString("C")</td>
+                    <td class="text-right">@item.AvailableStock</td>
+                    <td class="text-right">
+                        <button class="btn btn-danger btn-sm" @onclick="() => DeleteProduct(item.Id)">
                             🗑️ Supprimer
                         </button>
                     </td>
@@ -125,11 +142,21 @@
                 catalogBrandId = _brandId,
                 catalogTypeId = _typeId
             };
-            await client.PostAsJsonAsync("/api/catalog/items", newItem);
-            _message = $"✅ {_name} ajouté !";
-            _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
-            _name = string.Empty;
-            _description = string.Empty;
+            // On vérifie le code HTTP : en cas d'échec, on n'affiche pas un faux succès
+            // et on ne recharge pas inutilement la liste.
+            var resp = await client.PostAsJsonAsync("/api/catalog/items", newItem);
+            if (resp.IsSuccessStatusCode)
+            {
+                // Recharge la liste depuis le serveur pour refléter l'ajout réel.
+                _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+                _message = $"✅ {_name} ajouté !";
+                _name = string.Empty;
+                _description = string.Empty;
+            }
+            else
+            {
+                _message = $"❌ Échec de l'ajout (HTTP {(int)resp.StatusCode})";
+            }
         }
         catch (AccessTokenNotAvailableException ex)
         {
@@ -138,16 +165,25 @@
         }
     }
 
-    // Supprime un produit côté serveur, puis le retire de la liste locale (sans recharger)
-    // pour une mise à jour immédiate de l'affichage.
+    // Supprime un produit côté serveur. On ne met à jour l'affichage QUE si le serveur
+    // confirme la suppression (code HTTP de succès), pour éviter de masquer un produit
+    // qui n'a en réalité pas été supprimé (échec d'autorisation, erreur serveur...).
     private async Task DeleteProduct(int id)
     {
         try
         {
             var client = HttpClientFactory.CreateClient("CatalogAPI");
-            await client.DeleteAsync($"/api/catalog/items/{id}");
-            _items = _items?.Where(i => i.Id != id).ToList();
-            _message = "✅ Produit supprimé !";
+            var resp = await client.DeleteAsync($"/api/catalog/items/{id}");
+            if (resp.IsSuccessStatusCode)
+            {
+                // Recharge la liste depuis le serveur (source de vérité).
+                _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
+                _message = "✅ Produit supprimé !";
+            }
+            else
+            {
+                _message = $"❌ Échec de la suppression (HTTP {(int)resp.StatusCode})";
+            }
         }
         catch (AccessTokenNotAvailableException ex)
         {

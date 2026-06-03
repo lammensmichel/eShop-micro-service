@@ -7,34 +7,51 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject BuyerIdProvider BuyerIdProvider
 
-<h1>📋 Mes Commandes</h1>
+<div class="page-header">
+    <h1>📋 Mes Commandes</h1>
+</div>
 
 @if (_error is not null)
 {
-    <p style="color:red">Erreur : @_error</p>
+    <div class="alert alert-danger">Erreur : @_error</div>
 }
 else if (_orders is null)
 {
-    <p>Chargement...</p>
+    <div class="loading"><span class="spinner"></span> Chargement des commandes...</div>
 }
 else if (_orders.Count == 0)
 {
-    <p>Aucune commande. <a href="/catalog">Faire des achats</a></p>
+    <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        <h3>Aucune commande</h3>
+        <p>Vous n'avez pas encore passé de commande.</p>
+        <a href="/catalog" class="btn btn-primary">📦 Faire des achats</a>
+    </div>
 }
 else
 {
     @foreach (var order in _orders)
     {
         <div class="order-card">
-            <p><strong>Commande #@order.Id</strong> <span class="status">@order.Status</span></p>
-            <p>Date : @order.OrderDate.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</p>
-            <p>Total : <strong>@order.Total.ToString("C")</strong></p>
-            <ul>
+            <div class="order-head">
+                <div>
+                    <span class="order-id">Commande #@order.Id</span>
+                    <div class="order-date">@order.OrderDate.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</div>
+                </div>
+                <span class="badge @StatusBadgeClass(order.Status)">@StatusLabel(order.Status)</span>
+            </div>
+            <ul class="order-items">
                 @foreach (var item in order.Items)
                 {
-                    <li>@item.ProductName × @item.Units — @item.UnitPrice.ToString("C")</li>
+                    <li>
+                        <span class="item-name">@item.ProductName</span>
+                        <span class="item-qty">@item.Units × @item.UnitPrice.ToString("C")</span>
+                    </li>
                 }
             </ul>
+            <div class="order-footer">
+                Total : <strong>@order.Total.ToString("C")</strong>
+            </div>
         </div>
     }
 }
@@ -62,4 +79,29 @@ else
             _error = ex.Message;
         }
     }
+
+    // Associe chaque statut de commande (renvoyé en minuscules par Ordering.API) à
+    // une variante de badge colorée. Purement cosmétique (affichage).
+    private static string StatusBadgeClass(string status) => status?.ToLowerInvariant() switch
+    {
+        "submitted"          => "badge-neutral",
+        "awaitingvalidation" => "badge-warning",
+        "stockconfirmed"     => "badge-info",
+        "paid"               => "badge-teal",
+        "shipped"            => "badge-success",
+        "cancelled"          => "badge-danger",
+        _                    => "badge-neutral"
+    };
+
+    // Libellé français lisible pour chaque statut (l'affichage seulement).
+    private static string StatusLabel(string status) => status?.ToLowerInvariant() switch
+    {
+        "submitted"          => "Soumise",
+        "awaitingvalidation" => "En attente de validation",
+        "stockconfirmed"     => "Stock confirmé",
+        "paid"               => "Payée",
+        "shipped"            => "Expédiée",
+        "cancelled"          => "Annulée",
+        _                    => status ?? "Inconnu"
+    };
 }

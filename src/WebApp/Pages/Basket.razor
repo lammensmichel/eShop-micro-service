@@ -7,51 +7,62 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject BuyerIdProvider BuyerIdProvider
 
-<h1>🛒 Mon Panier</h1>
-
-@if (_error is not null)
-{
-    <p style="color:red">Erreur : @_error</p>
-}
-else if (_basket is null)
-{
-    <p>Chargement...</p>
-}
-else if (_basket.Items.Count == 0)
-{
-    <p>Votre panier est vide. <a href="/catalog">Voir le catalogue</a></p>
-}
-else
-{
-    <table class="basket-table">
-        <thead>
-            <tr>
-                <th>Produit</th>
-                <th>Prix unitaire</th>
-                <th>Quantité</th>
-                <th>Total</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var item in _basket.Items)
-            {
-                <tr>
-                    <td>@item.ProductName</td>
-                    <td>@item.UnitPrice.ToString("C")</td>
-                    <td>@item.Quantity</td>
-                    <td>@item.TotalPrice.ToString("C")</td>
-                </tr>
-            }
-        </tbody>
-    </table>
-
-    <p><strong>Total : @_basket.TotalPrice.ToString("C")</strong></p>
-    <button class="checkout-btn" @onclick="Checkout">✅ Passer commande</button>
-}
+<div class="page-header">
+    <h1>🛒 Mon Panier</h1>
+</div>
 
 @if (_message is not null)
 {
-    <p class="success-msg">@_message</p>
+    <div class="alert alert-success">@_message</div>
+}
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">Erreur : @_error</div>
+}
+else if (_basket is null)
+{
+    <div class="loading"><span class="spinner"></span> Chargement du panier...</div>
+}
+else if (_basket.Items.Count == 0)
+{
+    <div class="empty-state">
+        <div class="empty-icon">🛒</div>
+        <h3>Votre panier est vide</h3>
+        <p>Parcourez le catalogue pour ajouter des produits.</p>
+        <a href="/catalog" class="btn btn-primary">📦 Voir le catalogue</a>
+    </div>
+}
+else
+{
+    <div class="basket-layout">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Produit</th>
+                    <th class="text-right">Prix unitaire</th>
+                    <th class="text-right">Quantité</th>
+                    <th class="text-right">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in _basket.Items)
+                {
+                    <tr>
+                        <td>@item.ProductName</td>
+                        <td class="text-right">@item.UnitPrice.ToString("C")</td>
+                        <td class="text-right">@item.Quantity</td>
+                        <td class="text-right"><strong>@item.TotalPrice.ToString("C")</strong></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="basket-summary">
+            <span class="basket-total">Total à payer <strong>@_basket.TotalPrice.ToString("C")</strong></span>
+            <button class="btn btn-success btn-lg" @onclick="Checkout">✅ Passer commande</button>
+        </div>
+    </div>
 }
 
 @code {

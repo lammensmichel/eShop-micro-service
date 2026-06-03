@@ -1,77 +1,82 @@
-.page {
-    position: relative;
+/* Gabarit principal : en-tête sticky, contenu centré, footer discret. */
+
+.app-shell {
     display: flex;
     flex-direction: column;
+    min-height: 100vh;
 }
 
-main {
-    flex: 1;
+/* ----------------------------- En-tête ------------------------------ */
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: rgba(255, 255, 255, 0.92);
+    backdrop-filter: saturate(180%) blur(10px);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
 }
 
-.sidebar {
-    background-image: linear-gradient(180deg, rgb(5, 39, 103) 0%, #3a0647 70%);
-}
-
-.top-row {
-    background-color: #f7f7f7;
-    border-bottom: 1px solid #d6d5d5;
-    justify-content: flex-end;
-    height: 3.5rem;
+.app-header-inner {
+    max-width: var(--container);
+    margin: 0 auto;
     display: flex;
     align-items: center;
+    gap: 1.5rem;
+    padding: 0.65rem 1.5rem;
+    flex-wrap: wrap;
 }
 
-    .top-row ::deep a, .top-row ::deep .btn-link {
-        white-space: nowrap;
-        margin-left: 1.5rem;
-        text-decoration: none;
-    }
-
-    .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
-        text-decoration: underline;
-    }
-
-    .top-row ::deep a:first-child {
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-@media (max-width: 640.98px) {
-    .top-row {
-        justify-content: space-between;
-    }
-
-    .top-row ::deep a, .top-row ::deep .btn-link {
-        margin-left: 0;
-    }
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: -0.02em;
+}
+.brand:hover { color: var(--text); text-decoration: none; }
+.brand-mark { font-size: 1.4rem; }
+.brand-name {
+    background: linear-gradient(135deg, var(--primary) 0%, #7c3aed 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
-@media (min-width: 641px) {
-    .page {
-        flex-direction: row;
-    }
+/* Pousse la zone utilisateur à droite (le NavMenu prend l'espace central). */
+.user-zone {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+}
+.user-name {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+}
 
-    .sidebar {
-        width: 250px;
-        height: 100vh;
-        position: sticky;
-        top: 0;
-    }
+/* ----------------------------- Contenu ------------------------------ */
+.app-main {
+    flex: 1;
+    padding: 2rem 1.5rem;
+    width: 100%;
+}
 
-    .top-row {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-    }
+/* ------------------------------ Footer ------------------------------ */
+.app-footer {
+    border-top: 1px solid var(--border);
+    background-color: var(--surface);
+    padding: 1.25rem 1.5rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: center;
+}
 
-    .top-row.auth ::deep a:first-child {
-        flex: 1;
-        text-align: right;
-        width: 0;
-    }
-
-    .top-row, article {
-        padding-left: 2rem !important;
-        padding-right: 1.5rem !important;
-    }
+@media (max-width: 640px) {
+    .app-header-inner { gap: 0.75rem; }
+    .user-name { display: none; }
 }

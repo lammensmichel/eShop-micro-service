@@ -2,40 +2,24 @@
    La dernière entrée (Admin) est entourée d'un <AuthorizeView Roles="Admin"> : elle
    n'apparaît que pour les utilisateurs ayant le rôle "Admin" (ex. alice), grâce à
    l'éclatement du claim "role" réalisé par RolesClaimsPrincipalFactory. *@
-<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">🛍️ eShop</a>
-    </div>
-</div>
-
-<nav class="flex-column">
-    <div class="nav-item px-3">
-        <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-            🏠 Accueil
-        </NavLink>
-    </div>
-    <div class="nav-item px-3">
-        <NavLink class="nav-link" href="catalog">
-            📦 Catalogue
-        </NavLink>
-    </div>
-    <div class="nav-item px-3">
-        <NavLink class="nav-link" href="basket">
-            🛒 Panier
-        </NavLink>
-    </div>
-    <div class="nav-item px-3">
-        <NavLink class="nav-link" href="orders">
-            📋 Commandes
-        </NavLink>
-    </div>
+<nav class="main-nav">
+    <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+        🏠 Accueil
+    </NavLink>
+    <NavLink class="nav-link" href="catalog">
+        📦 Catalogue
+    </NavLink>
+    <NavLink class="nav-link" href="basket">
+        🛒 Panier
+    </NavLink>
+    <NavLink class="nav-link" href="orders">
+        📋 Commandes
+    </NavLink>
     <AuthorizeView Roles="Admin">
         <Authorized>
-            <div class="nav-item px-3">
-                <NavLink class="nav-link" href="admin">
-                    ⚙️ Admin
-                </NavLink>
-            </div>
+            <NavLink class="nav-link" href="admin">
+                ⚙️ Admin
+            </NavLink>
         </Authorized>
     </AuthorizeView>
 </nav>

@@ -6,28 +6,44 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
-    <main>
-        <div class="top-row px-4">
-            <AuthorizeView>
-                <Authorized>
-                    👤 @context.User.Identity?.Name
-                    <button @onclick="BeginLogout" style="background:none; border:none; color:#0d6efd; cursor:pointer; text-decoration:underline; margin-left:1rem;">
-                        🚪 Déconnexion
-                    </button>
-                </Authorized>
-                <NotAuthorized>
-                    <a href="authentication/login">🔑 Se connecter</a>
-                </NotAuthorized>
-            </AuthorizeView>
+<div class="app-shell">
+    @* En-tête sticky : marque eShop + navigation + zone utilisateur. *@
+    <header class="app-header">
+        <div class="app-header-inner">
+            <a class="brand" href="">
+                <span class="brand-mark">🛍️</span>
+                <span class="brand-name">eShop</span>
+            </a>
+
+            <NavMenu />
+
+            <div class="user-zone">
+                <AuthorizeView>
+                    <Authorized>
+                        <span class="user-name">👤 @context.User.Identity?.Name</span>
+                        <button class="btn btn-outline btn-sm" @onclick="BeginLogout">
+                            🚪 Déconnexion
+                        </button>
+                    </Authorized>
+                    <NotAuthorized>
+                        <a class="btn btn-primary btn-sm" href="authentication/login">🔑 Se connecter</a>
+                    </NotAuthorized>
+                </AuthorizeView>
+            </div>
         </div>
-        <article class="content px-4">
+    </header>
+
+    <main class="app-main">
+        <div class="page-container">
             @Body
-        </article>
+        </div>
     </main>
+
+    <footer class="app-footer">
+        <div class="page-container">
+            eShop — boutique de démonstration .NET 10 · Blazor WebAssembly
+        </div>
+    </footer>
 </div>
 
 @code {

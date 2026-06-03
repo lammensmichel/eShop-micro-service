@@ -2,18 +2,35 @@
    vers les trois pages principales du parcours d'achat (catalogue, panier, commandes). *@
 @page "/"
 
-<h1>🛍️ Bienvenue sur eShop</h1>
+<section class="hero">
+    <div class="hero-content">
+        <h1>Bienvenue sur eShop 🛍️</h1>
+        <p>
+            Une boutique en ligne moderne construite avec .NET 10, Blazor WebAssembly
+            et une architecture microservices. Parcourez le catalogue, remplissez votre
+            panier et suivez vos commandes en temps réel.
+        </p>
+        <div class="hero-actions">
+            <a href="/catalog" class="btn btn-lg btn-hero">📦 Découvrir le catalogue</a>
+            <a href="/basket" class="btn btn-lg btn-hero-outline">🛒 Voir mon panier</a>
+        </div>
+    </div>
+</section>
 
-<p>Une boutique en ligne construite avec .NET 10, Blazor WebAssembly, et une architecture microservices.</p>
-
-<div style="display: flex; gap: 1rem; margin-top: 2rem;">
-    <a href="/catalog" style="padding: 1rem 2rem; background: #0d6efd; color: white; text-decoration: none; border-radius: 8px;">
-        📦 Voir le catalogue
+<div class="feature-grid">
+    <a href="/catalog" class="feature-card">
+        <div class="feature-icon">📦</div>
+        <h3>Catalogue</h3>
+        <p>Explorez nos produits et ajoutez vos favoris au panier en un clic.</p>
     </a>
-    <a href="/basket" style="padding: 1rem 2rem; background: #198754; color: white; text-decoration: none; border-radius: 8px;">
-        🛒 Mon panier
+    <a href="/basket" class="feature-card">
+        <div class="feature-icon">🛒</div>
+        <h3>Panier</h3>
+        <p>Vérifiez votre sélection puis validez votre commande en toute simplicité.</p>
     </a>
-    <a href="/orders" style="padding: 1rem 2rem; background: #6f42c1; color: white; text-decoration: none; border-radius: 8px;">
-        📋 Mes commandes
+    <a href="/orders" class="feature-card">
+        <div class="feature-icon">📋</div>
+        <h3>Commandes</h3>
+        <p>Suivez l'historique et le statut de toutes vos commandes passées.</p>
     </a>
 </div>
