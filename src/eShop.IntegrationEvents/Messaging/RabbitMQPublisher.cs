@@ -31,7 +31,12 @@ public class RabbitMQPublisher : IEventBus, IAsyncDisposable
 
         var connection = await GetOrCreateConnectionAsync();
 
-        var json = JsonSerializer.Serialize(message);
+        // On sérialise selon le type RUNTIME (message.GetType()) et non selon T : si T est
+        // le type de base IntegrationEvent (cas du republish outbox, qui désérialise le
+        // Content vers IntegrationEvent), JsonSerializer.Serialize<T> n'émettrait que les
+        // propriétés de la base (Id/CreationDate) et perdrait les champs dérivés
+        // (OrderId/BuyerId, etc.), rendant le message illisible côté consommateur.
+        var json = JsonSerializer.Serialize(message, message.GetType());
         var body = Encoding.UTF8.GetBytes(json);
 
         var props = new BasicProperties
