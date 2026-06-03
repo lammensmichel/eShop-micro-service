@@ -1,6 +1,10 @@
 using eShop.IntegrationEvents.Messaging;
 using PaymentProcessor;
 
+// Service de fond pur (pas d'API HTTP) : un Host minimal qui héberge PaymentWorker.
+// Son rôle dans la chorégraphie saga est de simuler le paiement une fois le stock
+// confirmé, puis d'émettre l'événement de succès ou d'échec qui fait avancer (ou
+// compense) la commande côté Ordering.
 var builder = Host.CreateApplicationBuilder(args);
 
 // Socle partagé (OpenTelemetry, health checks, service discovery), comme les API.

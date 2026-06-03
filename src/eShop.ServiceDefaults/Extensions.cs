@@ -12,32 +12,55 @@ using OpenTelemetry.Trace;
 
 namespace Microsoft.Extensions.Hosting;
 
-// Adds common Aspire services: service discovery, resilience, health checks, and OpenTelemetry.
-// This project should be referenced by each service project in your solution.
-// To learn more about using this project, see https://aka.ms/aspire/service-defaults
+// ============================================================================
+// eShop.ServiceDefaults — le « socle commun » de TOUS les services Aspire.
+// ----------------------------------------------------------------------------
+// Plutôt que de recopier la même plomberie d'observabilité/résilience/santé dans
+// chaque Program.cs (Catalog, Basket, Ordering, Identity, WebApp, et les deux
+// workers OrderProcessor/PaymentProcessor), on la factorise ici sous forme de
+// méthodes d'extension. Chaque service appelle simplement AddServiceDefaults()
+// (et MapDefaultEndpoints() côté API web) au démarrage.
+//
+// L'intérêt pédagogique : voir comment Aspire mutualise les préoccupations
+// transverses (cross-cutting concerns) d'un système distribué.
+// Doc : https://aka.ms/aspire/service-defaults
+// ============================================================================
 public static class Extensions
 {
     private const string HealthEndpointPath = "/health";
     private const string AlivenessEndpointPath = "/alive";
 
+    // Point d'entrée unique appelé par chaque service. Active, d'un seul coup :
+    //   - OpenTelemetry (logs/metrics/traces) ;
+    //   - les health checks par défaut ;
+    //   - la découverte de services (résolution des noms logiques -> URLs) ;
+    //   - la résilience HTTP par défaut sur tous les HttpClient.
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
         builder.ConfigureOpenTelemetry();
 
         builder.AddDefaultHealthChecks();
 
+        // Service discovery : permet d'appeler un autre service par son NOM logique
+        // (ex. "http://catalog-api") au lieu d'une URL codée en dur. Aspire injecte
+        // la correspondance nom -> URL réelle via la configuration (WithReference).
         builder.Services.AddServiceDiscovery();
 
+        // Configuration appliquée à TOUS les HttpClient créés par le service.
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
-            // Turn on resilience by default
+            // Résilience par défaut : retries, circuit breaker, timeouts... (pile
+            // Polly intégrée). Indispensable entre microservices où une dépendance
+            // peut être momentanément indisponible.
             http.AddStandardResilienceHandler();
 
-            // Turn on service discovery by default
+            // Active la découverte de services sur le client : il sait résoudre les
+            // noms logiques en URLs concrètes.
             http.AddServiceDiscovery();
         });
 
-        // Uncomment the following to restrict the allowed schemes for service discovery.
+        // Décommenter pour restreindre les schémas autorisés par la découverte de
+        // services (ex. n'autoriser que HTTPS).
         // builder.Services.Configure<ServiceDiscoveryOptions>(options =>
         // {
         //     options.AllowedSchemes = ["https"];
@@ -79,8 +102,13 @@ public static class Extensions
         return builder;
     }
 
+    // Configure OpenTelemetry, le standard d'observabilité unifié de tous les services.
+    // Les trois signaux (logs, métriques, traces) sont exportés (voir AddOpenTelemetryExporters)
+    // vers le collecteur OTLP qu'Aspire branche automatiquement sur son tableau de bord :
+    // c'est ainsi qu'on voit les logs corrélés et le traçage distribué de bout en bout.
     public static TBuilder ConfigureOpenTelemetry<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
+        // LOGS : enrichit les logs envoyés à OpenTelemetry (message formaté + scopes).
         builder.Logging.AddOpenTelemetry(logging =>
         {
             logging.IncludeFormattedMessage = true;
@@ -88,22 +116,26 @@ public static class Extensions
         });
 
         builder.Services.AddOpenTelemetry()
+            // MÉTRIQUES : ASP.NET Core (requêtes), HttpClient (appels sortants),
+            // et runtime .NET (GC, threads, mémoire...).
             .WithMetrics(metrics =>
             {
                 metrics.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation();
             })
+            // TRACES (spans) : permettent de suivre une requête à travers plusieurs services.
             .WithTracing(tracing =>
             {
                 tracing.AddSource(builder.Environment.ApplicationName)
                     .AddAspNetCoreInstrumentation(tracing =>
-                        // Exclude health check requests from tracing
+                        // On exclut les appels de health check du traçage : sinon le dashboard
+                        // serait noyé sous les pings /health et /alive répétés.
                         tracing.Filter = context =>
                             !context.Request.Path.StartsWithSegments(HealthEndpointPath)
                             && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath)
                     )
-                    // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
+                    // Décommenter pour tracer gRPC (nécessite le package OpenTelemetry.Instrumentation.GrpcNetClient).
                     //.AddGrpcClientInstrumentation()
                     .AddHttpClientInstrumentation();
             });
@@ -113,8 +145,12 @@ public static class Extensions
         return builder;
     }
 
+    // Choisit où exporter les signaux OpenTelemetry.
     private static TBuilder AddOpenTelemetryExporters<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
+        // Aspire injecte la variable OTEL_EXPORTER_OTLP_ENDPOINT (URL de son collecteur)
+        // dans chaque service : sa simple présence suffit à activer l'export OTLP, qui
+        // alimente le tableau de bord. En dehors d'Aspire, la variable est absente -> pas d'export.
         var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 
         if (useOtlpExporter)
@@ -122,7 +158,7 @@ public static class Extensions
             builder.Services.AddOpenTelemetry().UseOtlpExporter();
         }
 
-        // Uncomment the following lines to enable the Azure Monitor exporter (requires the Azure.Monitor.OpenTelemetry.AspNetCore package)
+        // Décommenter pour exporter vers Azure Monitor (nécessite le package Azure.Monitor.OpenTelemetry.AspNetCore).
         //if (!string.IsNullOrEmpty(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
         //{
         //    builder.Services.AddOpenTelemetry()
@@ -132,25 +168,35 @@ public static class Extensions
         return builder;
     }
 
+    // Enregistre les health checks par défaut. On distingue deux notions :
+    //   - « live » (liveness)  : le process répond-il ? (sinon -> redémarrer)
+    //   - « ready » (readiness) : peut-il accepter du trafic ? (toutes les dépendances OK)
+    // Ici on ajoute un check « self » trivial, taggé "live", qui répond toujours sain :
+    // il prouve simplement que le host tourne. Les services peuvent en ajouter d'autres
+    // (Postgres, Redis...) qui, eux, comptent pour la readiness.
     public static TBuilder AddDefaultHealthChecks<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
         builder.Services.AddHealthChecks()
-            // Add a default liveness check to ensure app is responsive
             .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"]);
 
         return builder;
     }
 
+    // Expose les endpoints HTTP de santé. Appelé uniquement par les services web (les
+    // workers OrderProcessor/PaymentProcessor n'ont pas de pipeline HTTP et ne l'appellent pas).
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
-        // Adding health checks endpoints to applications in non-development environments has security implications.
-        // See https://aka.ms/aspire/healthchecks for details before enabling these endpoints in non-development environments.
+        // Exposer ces endpoints en production a des implications de sécurité (ils révèlent
+        // l'état interne) : on les limite donc à l'environnement de développement.
+        // Voir https://aka.ms/aspire/healthchecks avant de les activer en production.
         if (app.Environment.IsDevelopment())
         {
-            // All health checks must pass for app to be considered ready to accept traffic after starting
+            // /health (readiness) : TOUS les checks doivent passer -> le service est prêt à
+            // recevoir du trafic. C'est ce que WaitFor de l'AppHost interroge.
             app.MapHealthChecks(HealthEndpointPath);
 
-            // Only health checks tagged with the "live" tag must pass for app to be considered alive
+            // /alive (liveness) : seuls les checks taggés "live" doivent passer -> le service
+            // est simplement vivant (même si une dépendance n'est pas encore prête).
             app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
             {
                 Predicate = r => r.Tags.Contains("live")

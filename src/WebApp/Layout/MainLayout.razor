@@ -1,4 +1,8 @@
-﻿@inherits LayoutComponentBase
+﻿@* Gabarit principal partagé par toutes les pages (menu latéral + barre du haut + contenu).
+   La barre du haut utilise <AuthorizeView> pour afficher soit le nom de l'utilisateur
+   connecté + un bouton de déconnexion, soit un lien "Se connecter". @Body est l'emplacement
+   où la page courante (routée par App.razor) est injectée. *@
+@inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 
@@ -29,6 +33,8 @@
 @code {
     [Inject] NavigationManager Navigation { get; set; } = default!;
 
+    // Lance la déconnexion OIDC : redirige vers la page "authentication/logout",
+    // qui (via RemoteAuthenticatorView) révoque la session locale et le jeton.
     private void BeginLogout()
     {
         Navigation.NavigateToLogout("authentication/logout");

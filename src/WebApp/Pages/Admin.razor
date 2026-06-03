@@ -1,3 +1,8 @@
+@* Page Administration : gestion du catalogue (ajout/suppression de produits).
+   [Authorize(Roles = "Admin")] restreint l'accès aux utilisateurs ayant le rôle "Admin"
+   (ex. alice). Ce contrôle côté front N'EST PAS suffisant : Catalog.API revérifie le rôle
+   côté serveur sur POST/DELETE (défense en profondeur). Ici, le rôle ne fonctionne que
+   parce que RolesClaimsPrincipalFactory a éclaté le claim "role" en claims individuels. *@
 @page "/admin"
 @attribute [Authorize(Roles = "Admin")]
 @inject IHttpClientFactory HttpClientFactory
@@ -69,9 +74,11 @@
 }
 
 @code {
+    // État du formulaire et des listes affichées. Les champs _name/_price/... sont liés
+    // aux <input> du markup via @bind (liaison bidirectionnelle Blazor).
     private List<CatalogItemDto>? _items;
-    private List<BrandDto> _brands = [];
-    private List<TypeDto> _types = [];
+    private List<BrandDto> _brands = []; // alimente la liste déroulante des marques
+    private List<TypeDto> _types = [];   // alimente la liste déroulante des types
     private string _name = string.Empty;
     private string _description = string.Empty;
     private decimal _price;
@@ -80,6 +87,8 @@
     private int _typeId;
     private string? _message;
 
+    // Au montage : charge les produits existants ainsi que les marques/types disponibles
+    // pour pré-remplir les listes déroulantes du formulaire d'ajout.
     protected override async Task OnInitializedAsync()
     {
         try
@@ -88,6 +97,7 @@
             _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
             _brands = await client.GetFromJsonAsync<List<BrandDto>>("/api/catalog/brands") ?? [];
             _types = await client.GetFromJsonAsync<List<TypeDto>>("/api/catalog/types") ?? [];
+            // Sélectionne par défaut la première marque/le premier type s'ils existent.
             if (_brands.Any()) _brandId = _brands[0].Id;
             if (_types.Any()) _typeId = _types[0].Id;
         }
@@ -98,6 +108,8 @@
         }
     }
 
+    // Crée un produit via POST /api/catalog/items (endpoint protégé "Admin" côté serveur),
+    // puis recharge la liste pour refléter l'ajout.
     private async Task AddProduct()
     {
         try
@@ -126,6 +138,8 @@
         }
     }
 
+    // Supprime un produit côté serveur, puis le retire de la liste locale (sans recharger)
+    // pour une mise à jour immédiate de l'affichage.
     private async Task DeleteProduct(int id)
     {
         try

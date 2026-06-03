@@ -1,6 +1,9 @@
 using eShop.IntegrationEvents.Messaging;
 using OrderProcessor;
 
+// Service de fond pur (pas d'API HTTP) : un Host minimal qui héberge GracePeriodWorker.
+// Son seul rôle dans la chorégraphie saga est d'appliquer la « période de grâce » entre
+// la soumission de la commande et la confirmation côté Ordering (fenêtre d'annulation).
 var builder = Host.CreateApplicationBuilder(args);
 
 // Socle partagé (OpenTelemetry, health checks, service discovery), comme les API.

@@ -1,3 +1,6 @@
+@* Page Panier : deuxième étape du parcours d'achat.
+   Affiche le contenu du panier (lu dans Basket.API/Redis) et déclenche la commande
+   via le bouton "Passer commande" (checkout). [Authorize] impose d'être connecté. *@
 @page "/basket"
 
 @attribute [Authorize]
@@ -52,10 +55,11 @@ else
 }
 
 @code {
-    private BasketDto? _basket;
-    private string? _message;
+    private BasketDto? _basket; // null tant que le panier n'est pas chargé
+    private string? _message;   // message de succès (commande passée)
     private string? _error;
 
+    // Charge le panier de l'utilisateur courant au montage de la page.
     protected override async Task OnInitializedAsync()
     {
         try
@@ -75,6 +79,12 @@ else
         }
     }
 
+    // Checkout : valide le panier et lance la commande.
+    // Côté serveur, POST /api/basket/checkout publie un BasketCheckoutEvent sur RabbitMQ ;
+    // Ordering.API le consomme et crée la commande (agrégat Order) via MediatR. Le front
+    // ne fait donc qu'émettre l'intention : la création de commande est asynchrone et
+    // découplée (event-driven). Les infos d'adresse/paiement ci-dessous sont ici codées en
+    // dur à des fins d'apprentissage (pas de vrai formulaire de paiement).
     private async Task Checkout()
     {
         try
@@ -94,6 +104,7 @@ else
             });
             response.EnsureSuccessStatusCode();
             _message = "🎉 Commande passée avec succès !";
+            // On vide le panier affiché localement (le panier serveur sera purgé côté Basket.API).
             _basket = new BasketDto { BuyerId = buyerId };
         }
         catch (AccessTokenNotAvailableException ex)

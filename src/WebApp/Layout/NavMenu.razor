@@ -1,4 +1,8 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+﻿@* Menu de navigation latéral. Les NavLink mettent en surbrillance l'entrée active.
+   La dernière entrée (Admin) est entourée d'un <AuthorizeView Roles="Admin"> : elle
+   n'apparaît que pour les utilisateurs ayant le rôle "Admin" (ex. alice), grâce à
+   l'éclatement du claim "role" réalisé par RolesClaimsPrincipalFactory. *@
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">🛍️ eShop</a>
     </div>

@@ -17,6 +17,9 @@ public class OrderRepository : IRepository<Order>
         _context.Mediator = mediator;
     }
 
+    // Charge l'agrégat COMPLET : Include force le chargement des OrderItem pour que l'Order
+    // reconstruit soit cohérent (frontière d'agrégat = unité de chargement). On modifie
+    // ensuite l'agrégat via ses méthodes métier, jamais les lignes directement.
     public async Task<Order?> GetAsync(int id)
     {
         return await _context.Orders

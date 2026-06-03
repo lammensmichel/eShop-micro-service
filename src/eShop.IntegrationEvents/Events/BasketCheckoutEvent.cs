@@ -2,6 +2,12 @@ using eShop.IntegrationEvents.Messaging;
 
 namespace eShop.IntegrationEvents.Events;
 
+// Premier maillon de la chaîne cross-service : émis par Basket.API au checkout,
+// routing key "basket-checkout", consommé par Ordering.API qui le transforme en
+// CreateOrderCommand (via MediatR) pour créer l'agrégat Order. Il transporte donc
+// TOUT ce dont Ordering a besoin pour créer la commande sans rappeler Basket :
+// acheteur, adresse, carte, lignes, total (principe d'événement auto-suffisant).
+//
 // Id (hérité de IntegrationEvent) est généré à la publication et sert de clé
 // d'idempotence côté consommateur (Ordering.API) pour éviter de créer une commande
 // en double si le message est redélivré.

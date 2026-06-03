@@ -1,3 +1,8 @@
+@* Page Catalogue : première étape du parcours d'achat.
+   Affiche les produits renvoyés par Catalog.API et permet de les ajouter au panier.
+   [Authorize] impose d'être connecté. On récupère les clients HTTP nommés via
+   IHttpClientFactory (chacun cible un microservice et porte le jeton automatiquement),
+   et le BuyerId via BuyerIdProvider (jamais codé en dur). *@
 @page "/catalog"
 @attribute [Authorize]
 @inject IHttpClientFactory HttpClientFactory
@@ -39,20 +44,27 @@ else
 }
 
 @code {
+    // _items null = chargement en cours ; liste vide = aucun produit ; sinon = données prêtes.
+    // Ce triple état (null / vide / rempli) pilote l'affichage conditionnel du markup ci-dessus.
     private List<CatalogItemDto>? _items;
-    private string? _message;
-    private string? _error;
+    private string? _message; // message de succès temporaire ("ajouté au panier")
+    private string? _error;   // message d'erreur à afficher en rouge
 
+    // OnInitializedAsync : appelé une fois au montage de la page. On y charge le catalogue.
     protected override async Task OnInitializedAsync()
     {
         try
         {
+            // Client typé "CatalogAPI" : BaseAddress + handler qui ajoute le jeton Bearer.
             var client = HttpClientFactory.CreateClient("CatalogAPI");
             _items = await client.GetFromJsonAsync<List<CatalogItemDto>>("/api/catalog/items");
         }
         catch (AccessTokenNotAvailableException ex)
         {
-            // Jeton expiré : on redirige vers la connexion.
+            // Jeton absent/expiré : le AuthorizationMessageHandler n'a pas pu attacher un
+            // jeton valide à la requête et lève cette exception. ex.Redirect() renvoie alors
+            // l'utilisateur vers le flux de connexion OIDC pour réauthentifier. Ce pattern est
+            // répété dans chaque appel HTTP des pages.
             ex.Redirect();
         }
         catch (Exception ex)
@@ -61,16 +73,22 @@ else
         }
     }
 
+    // Ajoute un produit au panier. Stratégie "lire-modifier-réécrire" : on récupère le
+    // panier courant, on l'ajuste en mémoire, puis on le renvoie en entier à Basket.API
+    // (qui stocke le panier dans Redis, indexé par BuyerId).
     private async Task AddToBasket(CatalogItemDto item)
     {
         try
         {
+            // BuyerId = "sub" du jeton, source unique de vérité pour la clé du panier.
             var buyerId = await BuyerIdProvider.GetBuyerIdAsync();
             var client = HttpClientFactory.CreateClient("BasketAPI");
 
+            // Récupère le panier existant, ou en crée un vide s'il n'y en a pas encore.
             var basket = await client.GetFromJsonAsync<BasketDto>($"/api/basket/{buyerId}")
                 ?? new BasketDto { BuyerId = buyerId };
 
+            // Produit déjà présent -> on incrémente ; sinon on ajoute une nouvelle ligne.
             var existing = basket.Items.FirstOrDefault(i => i.ProductId == item.Id);
             if (existing is not null)
                 existing.Quantity++;
@@ -83,10 +101,12 @@ else
                     Quantity = 1
                 });
 
+            // Réécrit le panier complet côté serveur (POST = upsert du panier entier).
             basket.BuyerId = buyerId;
             var response = await client.PostAsJsonAsync("/api/basket", basket);
             response.EnsureSuccessStatusCode();
 
+            // Affiche un message de confirmation puis l'efface après 2 secondes.
             _message = $"✅ {item.Name} ajouté au panier !";
             await Task.Delay(2000);
             _message = null;

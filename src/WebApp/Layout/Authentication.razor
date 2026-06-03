@@ -1,9 +1,16 @@
+@* Page technique gérant TOUTES les étapes du flux OIDC dans le navigateur.
+   L'URL contient une "action" ({action}) : login, login-callback, logout,
+   logout-callback, etc. Le paramètre route est transmis à RemoteAuthenticatorView,
+   le composant fourni par Blazor qui orchestre les redirections vers Identity.API
+   et le traitement des callbacks (échange du code, stockage du jeton...).
+   On n'écrit donc aucune logique d'auth ici : tout est délégué à ce composant. *@
 @page "/authentication/{action}"
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 
 <RemoteAuthenticatorView Action="@Action" />
 
 @code {
+    // Étape du flux d'authentification déduite de l'URL (ex. "login", "logout-callback").
     [Parameter]
     public string? Action { get; set; }
 }

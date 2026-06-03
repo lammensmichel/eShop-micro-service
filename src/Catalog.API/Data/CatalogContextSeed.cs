@@ -2,13 +2,19 @@ using Catalog.API.Models;
 
 namespace Catalog.API.Data;
 
+// Seed = jeu de données initial inséré au démarrage (appelé depuis Program.cs,
+// juste après l'application des migrations). Permet d'avoir un catalogue
+// fonctionnel sans saisie manuelle dès le premier lancement.
 public static class CatalogContextSeed
 {
     public static async Task SeedAsync(CatalogDbContext context)
     {
+        // Garde d'idempotence : si la base contient déjà des données de référence,
+        // on s'arrête. Ainsi un redémarrage de l'API ne réinsère pas de doublons.
         if (context.CatalogBrands.Any() || context.CatalogTypes.Any())
             return; // Déjà seedé, on ne refait pas
 
+        // Tables de référence : les marques disponibles.
         var brands = new List<CatalogBrand>
         {
             new() { Name = "Azure" },
@@ -18,6 +24,7 @@ public static class CatalogContextSeed
             new() { Name = "Other" }
         };
 
+        // Tables de référence : les types/catégories de produits.
         var types = new List<CatalogType>
         {
             new() { Type = "Mug" },
@@ -26,10 +33,15 @@ public static class CatalogContextSeed
             new() { Type = "USB Memory Stick" }
         };
 
+        // On persiste d'abord marques et types : EF leur attribue alors leurs Id,
+        // qui serviront ensuite à rattacher les produits via les navigations.
         await context.CatalogBrands.AddRangeAsync(brands);
         await context.CatalogTypes.AddRangeAsync(types);
         await context.SaveChangesAsync();
 
+        // Produits du catalogue. On référence les marques/types par instance
+        // (CatalogBrand = brands[1], ...) plutôt que par Id : EF déduit la clé
+        // étrangère depuis la navigation, ce qui est plus lisible dans un seed.
         var items = new List<CatalogItem>
         {
             new()
@@ -74,6 +86,7 @@ public static class CatalogContextSeed
             }
         };
 
+        // Second SaveChanges : insère les produits une fois leurs dépendances en base.
         await context.CatalogItems.AddRangeAsync(items);
         await context.SaveChangesAsync();
     }

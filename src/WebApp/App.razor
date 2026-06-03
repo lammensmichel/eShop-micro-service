@@ -1,4 +1,12 @@
-﻿<CascadingAuthenticationState>
+﻿@* Composant racine de l'application.
+   - CascadingAuthenticationState diffuse l'état d'authentification (utilisateur connecté
+     ou non) à TOUS les composants descendants, ce qui fait fonctionner <AuthorizeView>,
+     [Authorize] et @context.User partout dans l'app.
+   - Router fait correspondre l'URL courante à une page (@page) trouvée dans cet assembly.
+   - AuthorizeRouteView combine routage ET autorisation : si la page exige l'auth via
+     [Authorize] et que l'utilisateur n'est pas connecté, le bloc <NotAuthorized> s'affiche
+     à la place de la page. *@
+<CascadingAuthenticationState>
     <Router AppAssembly="@typeof(App).Assembly">
         <Found Context="routeData">
             <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)">

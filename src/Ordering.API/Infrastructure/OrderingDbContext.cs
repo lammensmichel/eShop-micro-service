@@ -26,7 +26,13 @@ public class OrderingDbContext : DbContext
     {
         modelBuilder.Entity<Order>(order =>
         {
+            // Address est un VALUE OBJECT « possédé » (owned type) : pas de table ni de clé
+            // propre, ses colonnes sont aplaties dans la table Orders. Son cycle de vie est
+            // entièrement lié à l'Order qui le contient.
             order.OwnsOne(o => o.Address);
+            // OrderStatus est une enumeration class : on persiste son Id (entier stable) et
+            // on re-mappe l'entier vers le SINGLETON correspondant à la lecture, pour que
+            // l'égalité par référence/valeur reste cohérente côté domaine.
             order.Property(o => o.Status)
                 .HasConversion(
                     s => s.Id,
@@ -36,6 +42,9 @@ public class OrderingDbContext : DbContext
                           id == 5 ? OrderStatus.StockConfirmed :
                           id == 6 ? OrderStatus.Paid :
                           OrderStatus.Cancelled);
+            // Relation 1-N vers les lignes, avec une clé étrangère SHADOW « OrderId »
+            // (pas de propriété OrderId dans OrderItem) : la ligne ne référence pas son
+            // parent dans le modèle, l'agrégat est toujours navigué depuis Order vers ses items.
             order.HasMany(o => o.OrderItems)
                 .WithOne()
                 .HasForeignKey("OrderId");

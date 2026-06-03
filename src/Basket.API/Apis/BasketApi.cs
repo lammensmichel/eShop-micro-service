@@ -6,6 +6,15 @@ using eShop.IntegrationEvents.Messaging;
 
 namespace Basket.API.Apis;
 
+// Groupe d'endpoints minimal-API du panier (style "minimal APIs" : pas de contrôleurs,
+// les handlers sont des lambdas et leurs dépendances sont injectées par paramètre).
+// Enregistré dans Program.cs via MapBasketApi().RequireAuthorization() : TOUT le groupe
+// exige un jeton valide.
+//
+// Principe de sécurité transverse (anti-IDOR) : aucun endpoint ne fait confiance à un
+// identifiant d'acheteur venant du client (paramètre d'URL ou corps de requête). Le
+// buyerId réel est SYSTÉMATIQUEMENT dérivé du jeton JWT (cf. GetBuyerId). Sans cela, un
+// utilisateur authentifié pourrait lire/modifier le panier d'autrui en changeant l'URL.
 public static class BasketApi
 {
     public static RouteGroupBuilder MapBasketApi(this IEndpointRouteBuilder app)
@@ -49,6 +58,12 @@ public static class BasketApi
             var basket = await repository.GetBasketAsync(tokenBuyerId);
             if (basket is null) return Results.NotFound();
 
+            // Checkout = frontière entre services. Basket.API ne crée PAS la commande
+            // lui-même : il publie un événement d'intégration (BasketCheckoutEvent) sur
+            // le bus RabbitMQ, qu'Ordering.API consomme pour créer la commande. On compose
+            // le message à partir du contenu du panier (source serveur) et des infos de
+            // checkout (corps de requête). C'est le découplage typique d'une architecture
+            // microservices pilotée par événements.
             var eventMessage = new BasketCheckoutEvent
             {
                 BuyerId = tokenBuyerId,

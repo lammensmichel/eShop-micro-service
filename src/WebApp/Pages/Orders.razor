@@ -1,3 +1,7 @@
+@* Page Commandes : dernière étape du parcours.
+   Affiche l'historique des commandes de l'utilisateur, lu depuis Ordering.API.
+   Comme le checkout est asynchrone (via RabbitMQ), une commande tout juste passée peut
+   apparaître ici avec un court délai. [Authorize] impose d'être connecté. *@
 @page "/orders"
 @attribute [Authorize]
 @inject IHttpClientFactory HttpClientFactory
@@ -36,9 +40,10 @@ else
 }
 
 @code {
-    private List<OrderDto>? _orders;
+    private List<OrderDto>? _orders; // null = chargement ; vide = aucune commande
     private string? _error;
 
+    // Charge les commandes de l'utilisateur courant (filtrées par BuyerId côté API).
     protected override async Task OnInitializedAsync()
     {
         try
