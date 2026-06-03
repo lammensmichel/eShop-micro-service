@@ -19,8 +19,8 @@ var allowedOrigins = builder.Configuration
 
 if (allowedOrigins is null || allowedOrigins.Length == 0)
 {
-    // Repli dev : origines locales typiques du front Blazor / WebApp.Server.
-    allowedOrigins = ["https://localhost:5001", "http://localhost:5000"];
+    // Repli dev : origines réelles du front Blazor / WebApp.Server (cf. launchSettings).
+    allowedOrigins = ["https://localhost:7204", "http://localhost:5274"];
 }
 
 builder.Services.AddCors(options =>
