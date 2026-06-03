@@ -92,6 +92,12 @@ public static class Extensions
                 // Aucune ApiResource n'est définie dans Identity.API (uniquement des ApiScopes),
                 // donc le jeton ne porte pas de claim "aud" -> on ne valide pas l'audience.
                 options.TokenValidationParameters.ValidateAudience = false;
+                // On désactive le mapping « hérité » des claims entrants : sinon le handler
+                // renomme "role"/"name" vers leurs URI longs (…/claims/role, …/claims/name),
+                // et comme on déclare RoleClaimType="role"/NameClaimType="name" (noms courts),
+                // plus rien ne correspond -> IsInRole("Admin") échoue (403 sur les endpoints
+                // [Authorize(Roles="Admin")]). MapInboundClaims=false conserve les noms bruts.
+                options.MapInboundClaims = false;
                 // Aligne les claims sur ceux émis par CustomProfileService.
                 options.TokenValidationParameters.NameClaimType = "name";
                 options.TokenValidationParameters.RoleClaimType = "role";
