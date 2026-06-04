@@ -77,6 +77,19 @@ public class IntegrationEventLogPublisher : BackgroundService
                     entry.EventId, entry.EventTypeName);
 
                 await logService.MarkAsFailedAsync(entry.EventId);
+
+                // entry.TimesSent a été incrémenté (MarkAsInProgress puis état Failed). Si le
+                // seuil est atteint, on PRÉVIENT explicitement : cette entrée ne sera plus
+                // re-sélectionnée par RetrievePendingEventsAsync (voir IntegrationEventLogService),
+                // donc on cesse de la retenter. Le warning rend l'abandon visible pour qu'un
+                // opérateur puisse investiguer l'event « poison » resté à l'état Failed.
+                if (entry.TimesSent >= IntegrationEventLogService.MaxSendAttempts)
+                {
+                    _logger.LogWarning(
+                        "Événement d'intégration {EventId} ({EventType}) abandonné après {Attempts} tentatives : "
+                        + "il ne sera plus republié (reste en base à l'état Failed pour inspection)",
+                        entry.EventId, entry.EventTypeName, entry.TimesSent);
+                }
             }
         }
     }

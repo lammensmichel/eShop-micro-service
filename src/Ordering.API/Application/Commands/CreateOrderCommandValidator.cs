@@ -22,7 +22,12 @@ public class CreateOrderCommandValidator : AbstractValidator<CreateOrderCommand>
         RuleForEach(c => c.Items).ChildRules(item =>
         {
             item.RuleFor(i => i.Quantity).GreaterThan(0).WithMessage("La quantité doit être supérieure à 0.");
-            item.RuleFor(i => i.UnitPrice).GreaterThanOrEqualTo(0).WithMessage("Le prix unitaire doit être positif ou nul.");
+            // ALIGNEMENT sur l'invariant du domaine : OrderItem exige un prix STRICTEMENT
+            // positif (> 0). Accepter 0 ici laisserait passer une commande qui ferait ensuite
+            // lever le domaine plus bas dans le pipeline -> erreur 500 opaque. En contraignant
+            // GreaterThan(0) au niveau du validateur, la frontière renvoie un 400 propre et
+            // explicite au client, comme pour Quantity.
+            item.RuleFor(i => i.UnitPrice).GreaterThan(0).WithMessage("Le prix unitaire doit être supérieur à 0.");
         });
     }
 }

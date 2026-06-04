@@ -57,8 +57,19 @@ public static class OrderingApi
             if (string.IsNullOrEmpty(tokenBuyerId))
                 return Results.Unauthorized();
 
-            await mediator.Send(new SetAwaitingValidationCommand(id, tokenBuyerId));
-            return Results.NoContent();
+            // KeyNotFoundException (ordre inexistant OU n'appartenant pas à l'appelant, cf.
+            // anti-IDOR dans le handler) -> 404 propre, plutôt qu'une exception non traduite
+            // remontant en 500. On ne révèle pas la distinction « inexistant / pas à vous »
+            // (même 404) pour ne pas fuiter l'existence des commandes d'autrui.
+            try
+            {
+                await mediator.Send(new SetAwaitingValidationCommand(id, tokenBuyerId));
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
         });
 
         // PUT /api/orders/{id}/ship
@@ -69,8 +80,16 @@ public static class OrderingApi
             if (string.IsNullOrEmpty(tokenBuyerId))
                 return Results.Unauthorized();
 
-            await mediator.Send(new ShipOrderCommand(id, tokenBuyerId));
-            return Results.NoContent();
+            // Ordre inexistant ou pas à l'appelant -> 404 (voir await-validation ci-dessus).
+            try
+            {
+                await mediator.Send(new ShipOrderCommand(id, tokenBuyerId));
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
         });
 
         // PUT /api/orders/{id}/cancel
@@ -81,8 +100,16 @@ public static class OrderingApi
             if (string.IsNullOrEmpty(tokenBuyerId))
                 return Results.Unauthorized();
 
-            await mediator.Send(new CancelOrderCommand(id, tokenBuyerId));
-            return Results.NoContent();
+            // Ordre inexistant ou pas à l'appelant -> 404 (voir await-validation ci-dessus).
+            try
+            {
+                await mediator.Send(new CancelOrderCommand(id, tokenBuyerId));
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
         });
 
         return group;

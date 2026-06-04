@@ -75,7 +75,21 @@ public static class CatalogApi
         group.MapPost("/items", [Authorize(Roles = "Admin")] async (CatalogItem item, CatalogDbContext db) =>
         {
             db.CatalogItems.Add(item);
-            await db.SaveChangesAsync();
+            // POURQUOI ce try/catch : item.CatalogBrandId / CatalogTypeId sont des clés
+            // étrangères. Si le client envoie un Id de marque ou de type inexistant,
+            // Postgres rejette l'INSERT (violation de contrainte FK) et EF remonte une
+            // DbUpdateException. Sans interception, ASP.NET renvoie un 500 opaque qui
+            // masque la vraie cause (une donnée invalide côté client). On la traduit
+            // donc en 400 Bad Request avec un message clair : l'erreur vient de l'appelant,
+            // pas du serveur.
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                return Results.BadRequest("Référence de marque/type invalide ou conflit de données.");
+            }
             // 201 Created + en-tête Location pointant vers la ressource nouvellement créée.
             return Results.Created($"/api/catalog/items/{item.Id}", item);
         });
@@ -83,6 +97,14 @@ public static class CatalogApi
         // PUT — mise à jour complète d'un produit existant (Admin seulement).
         group.MapPut("/items/{id:int}", [Authorize(Roles = "Admin")] async (int id, CatalogItem item, CatalogDbContext db) =>
         {
+            // GARDE DE COHÉRENCE : l'Id qui fait foi est celui de l'URL. Si le corps
+            // porte aussi un Id (item.Id != 0) et qu'il diffère de l'id de la route,
+            // c'est une incohérence évidente de la requête : on la rejette plutôt que
+            // de deviner laquelle est la bonne. (item.Id == 0 = "non renseigné", car
+            // CatalogItem.Id est un int non nullable ; ce cas est toléré.)
+            if (item.Id != 0 && item.Id != id)
+                return Results.BadRequest("L'identifiant du corps ne correspond pas à celui de l'URL.");
+
             // On recharge l'entité suivie par EF puis on recopie les champs : ainsi
             // le change tracker génère un UPDATE ciblé au SaveChanges.
             var existing = await db.CatalogItems.FindAsync(id);
@@ -95,7 +117,18 @@ public static class CatalogApi
             existing.CatalogBrandId = item.CatalogBrandId;
             existing.CatalogTypeId = item.CatalogTypeId;
 
-            await db.SaveChangesAsync();
+            // Même protection qu'au POST : un CatalogBrandId / CatalogTypeId pointant
+            // vers une ligne inexistante viole la contrainte de clé étrangère à
+            // l'UPDATE et provoque une DbUpdateException. On la traduit en 400 plutôt
+            // que de laisser fuiter un 500 opaque.
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                return Results.BadRequest("Référence de marque/type invalide ou conflit de données.");
+            }
             return Results.Ok(existing);
         });
 

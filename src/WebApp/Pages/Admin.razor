@@ -123,6 +123,15 @@
             // Jeton expiré : on redirige vers la connexion.
             ex.Redirect();
         }
+        catch (Exception ex)
+        {
+            // Gestion d'erreur générique : toute autre défaillance (réseau, HTTP 500,
+            // timeout, désérialisation...) est capturée ici pour éviter que le handler
+            // Blazor ne plante et n'affiche le bandeau générique sans contexte.
+            // On renseigne _message (déjà affiché par le markup) avec un message lisible.
+            // _items reste null : la table ne s'affiche pas, l'utilisateur voit l'erreur.
+            _message = $"❌ Impossible de charger le catalogue : {ex.Message}";
+        }
     }
 
     // Crée un produit via POST /api/catalog/items (endpoint protégé "Admin" côté serveur),
@@ -163,6 +172,13 @@
             // Jeton expiré : on redirige vers la connexion.
             ex.Redirect();
         }
+        catch (Exception ex)
+        {
+            // Gestion d'erreur générique : capture toute défaillance (réseau, HTTP 500,
+            // timeout, désérialisation...) pour ne pas faire planter le composant.
+            // On affiche un message d'erreur lisible via _message.
+            _message = $"❌ Échec de l'ajout du produit : {ex.Message}";
+        }
     }
 
     // Supprime un produit côté serveur. On ne met à jour l'affichage QUE si le serveur
@@ -189,6 +205,13 @@
         {
             // Jeton expiré : on redirige vers la connexion.
             ex.Redirect();
+        }
+        catch (Exception ex)
+        {
+            // Gestion d'erreur générique : capture toute défaillance (réseau, HTTP 500,
+            // timeout, désérialisation...) pour ne pas faire planter le composant.
+            // On affiche un message d'erreur lisible via _message.
+            _message = $"❌ Échec de la suppression du produit : {ex.Message}";
         }
     }
 }

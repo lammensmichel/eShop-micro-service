@@ -316,16 +316,28 @@ public class RabbitMQConsumer : BackgroundService
             : new Dictionary<string, object?>(ea.BasicProperties.Headers);
         headers[RetryCountHeader] = retryCount;
 
+        // On RÉ-ALIGNE les BasicProperties sur la publication d'origine (RabbitMQPublisher) :
+        // un message republié pour retry doit être indistinguable d'un message frais. Omettre
+        // ContentType ou la persistance dégraderait silencieusement le réessai :
+        //   - ContentType="application/json" : conserve le contrat de format. Un consommateur
+        //     (ou un outillage) qui s'y fie ne doit pas voir le type disparaître au 2e essai.
+        //   - DeliveryMode persistant : le message republié doit, lui aussi, survivre à un
+        //     redémarrage du broker (sinon un retry pourrait être perdu là où l'original ne
+        //     l'aurait pas été).
         var properties = new BasicProperties
         {
-            Persistent = true,
+            DeliveryMode = DeliveryModes.Persistent,
+            ContentType = "application/json",
             Headers = headers
         };
 
+        // mandatory:true comme à l'émission : la queue est liée à cette routing key, donc le
+        // message DOIT être routable ; un échec de routage est alors signalé bruyamment plutôt
+        // qu'avalé en silence (cohérence avec RabbitMQPublisher).
         await channel.BasicPublishAsync(
             exchange: ExchangeName,
             routingKey: ea.RoutingKey,
-            mandatory: false,
+            mandatory: true,
             basicProperties: properties,
             body: ea.Body);
     }

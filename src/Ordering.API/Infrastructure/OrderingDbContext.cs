@@ -40,15 +40,13 @@ public class OrderingDbContext : DbContext
             // OrderStatus est une enumeration class : on persiste son Id (entier stable) et
             // on re-mappe l'entier vers le SINGLETON correspondant à la lecture, pour que
             // l'égalité par référence/valeur reste cohérente côté domaine.
+            // NB : HasConversion attend des ARBRES D'EXPRESSION (Expression<Func<...>>), qui
+            // n'autorisent ni `switch` ni `throw`. On déporte donc le mapping fail-fast dans
+            // une méthode statique (un APPEL de méthode, lui, est permis dans une expression).
             order.Property(o => o.Status)
                 .HasConversion(
                     s => s.Id,
-                    id => id == 1 ? OrderStatus.Submitted :
-                          id == 2 ? OrderStatus.AwaitingValidation :
-                          id == 3 ? OrderStatus.Shipped :
-                          id == 5 ? OrderStatus.StockConfirmed :
-                          id == 6 ? OrderStatus.Paid :
-                          OrderStatus.Cancelled);
+                    id => StatusFromId(id));
             // Relation 1-N vers les lignes, avec une clé étrangère SHADOW « OrderId »
             // (pas de propriété OrderId dans OrderItem) : la ligne ne référence pas son
             // parent dans le modèle, l'agrégat est toujours navigué depuis Order vers ses items.
@@ -82,6 +80,23 @@ public class OrderingDbContext : DbContext
             e.Property(l => l.State).HasConversion<int>();
         });
     }
+
+    // Re-mappe l'Id stocké en base vers le SINGLETON OrderStatus correspondant.
+    // Cas par défaut EXPLICITE : tout Id inconnu (donnée corrompue, valeur d'une version
+    // future non gérée...) lève au lieu d'être silencieusement mappé sur un statut arbitraire.
+    // On préfère ÉCHOUER FRANCHEMENT (fail fast) pour que le bug soit visible plutôt que
+    // de faire apparaître, par exemple, un ordre comme « annulé » à tort.
+    private static OrderStatus StatusFromId(int id) => id switch
+    {
+        1 => OrderStatus.Submitted,
+        2 => OrderStatus.AwaitingValidation,
+        3 => OrderStatus.Shipped,
+        4 => OrderStatus.Cancelled,
+        5 => OrderStatus.StockConfirmed,
+        6 => OrderStatus.Paid,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(id), id, "OrderStatus Id inconnu lu en base")
+    };
 
     // DISPATCH AUTOMATIQUE DES DOMAIN EVENTS sur SaveChanges. Ordre :
     //   1) base.SaveChangesAsync : EF écrit les changements en base (INSERT/UPDATE) et, pour

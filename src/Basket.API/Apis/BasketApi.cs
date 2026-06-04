@@ -81,6 +81,15 @@ public static class BasketApi
             var basket = await repository.GetBasketAsync(tokenBuyerId);
             if (basket is null) return Results.NotFound();
 
+            // GARDE PANIER VIDE : un panier peut exister tout en n'ayant aucune ligne
+            // (Items vide). Publier un BasketCheckoutEvent sans items pousserait
+            // Ordering.API à créer une commande sans aucune ligne — or l'agrégat Order
+            // exige AU MOINS un OrderItem (invariant du domaine). On refuserait donc
+            // soit côté domaine (exception), soit on créerait une commande incohérente.
+            // On bloque ici, AVANT toute publication, avec un 400 explicite.
+            if (basket.Items is null || basket.Items.Count == 0)
+                return Results.BadRequest("Le panier est vide");
+
             // Checkout = frontière entre services. Basket.API ne crée PAS la commande
             // lui-même : il publie un événement d'intégration (BasketCheckoutEvent) sur
             // le bus RabbitMQ, qu'Ordering.API consomme pour créer la commande. On compose
