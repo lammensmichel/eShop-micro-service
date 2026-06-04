@@ -4,9 +4,17 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Identity.API.Pages.Home;
 
-// Code-behind de la page d'erreur d'IdentityServer.
-// En cas de problème dans un flux OIDC (client inconnu, scope refusé, etc.),
-// IdentityServer redirige ici avec un "errorId" pointant vers le détail de l'erreur.
+// ============================================================================
+// FICHIER : Home/Error.cshtml.cs  —  code-behind de la page d'ERREUR OIDC.
+//
+// RÔLE : quand un flux OIDC échoue (client inconnu, RedirectUri non déclaré,
+//   scope refusé...), IdentityServer ne renvoie pas un message brut : il redirige
+//   le navigateur ici avec un "errorId". Ce code récupère, via le service
+//   d'interaction d'IdentityServer, le détail d'erreur associé à cet identifiant
+//   pour que le markup (.cshtml) puisse l'afficher proprement.
+//
+// À LIRE après les pages Login/Logout ; c'est le filet de sécurité du flux.
+// ============================================================================
 public class ErrorModel : PageModel
 {
     private readonly IIdentityServerInteractionService _interaction;

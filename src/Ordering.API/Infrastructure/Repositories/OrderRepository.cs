@@ -5,6 +5,11 @@ using Ordering.API.Domain.SeedWork;
 
 namespace Ordering.API.Infrastructure.Repositories;
 
+// IMPLÉMENTATION concrète du repository d'agrégat Order. L'INTERFACE IRepository<Order> vit
+// dans le domaine (Domain/SeedWork) ; la mise en œuvre EF Core vit ici, dans l'infrastructure :
+// c'est l'INVERSION DE DÉPENDANCE en action (le domaine ne connaît pas Postgres). Enregistrée
+// dans Program.cs (AddScoped). Le repository est une fine façade au-dessus du DbContext
+// (lui-même Unit of Work) : il restreint l'accès aux opérations légitimes sur l'agrégat.
 public class OrderRepository : IRepository<Order>
 {
     private readonly OrderingDbContext _context;
@@ -12,8 +17,9 @@ public class OrderRepository : IRepository<Order>
     public OrderRepository(OrderingDbContext context, IMediator mediator)
     {
         _context = context;
-        // Renseigne le médiateur sur le contexte (mis en pool) pour activer
-        // le dispatch automatique des domain events lors de SaveChangesAsync (point 5).
+        // Le DbContext étant mis en pool, on ne peut pas lui injecter IMediator par son
+        // constructeur ; on le renseigne donc ici, à la construction du repository (lui scoped),
+        // pour activer le dispatch automatique des domain events dans SaveChangesAsync.
         _context.Mediator = mediator;
     }
 

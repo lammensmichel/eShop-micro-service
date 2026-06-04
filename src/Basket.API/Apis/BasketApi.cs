@@ -6,15 +6,38 @@ using eShop.IntegrationEvents.Messaging;
 
 namespace Basket.API.Apis;
 
-// Groupe d'endpoints minimal-API du panier (style "minimal APIs" : pas de contrôleurs,
-// les handlers sont des lambdas et leurs dépendances sont injectées par paramètre).
-// Enregistré dans Program.cs via MapBasketApi().RequireAuthorization() : TOUT le groupe
-// exige un jeton valide.
+// =============================================================================
+// FICHIER : BasketApi.cs
+// RÔLE    : la "façade" HTTP du service Basket. Définit les endpoints REST du
+//           panier (lire, mettre à jour, checkout, supprimer).
+// CONCEPT : MINIMAL API + SÉCURITÉ ANTI-IDOR + FRONTIÈRE ÉVÉNEMENTIELLE.
 //
-// Principe de sécurité transverse (anti-IDOR) : aucun endpoint ne fait confiance à un
-// identifiant d'acheteur venant du client (paramètre d'URL ou corps de requête). Le
-// buyerId réel est SYSTÉMATIQUEMENT dérivé du jeton JWT (cf. GetBuyerId). Sans cela, un
-// utilisateur authentifié pourrait lire/modifier le panier d'autrui en changeant l'URL.
+//   - "Minimal API" : style ASP.NET Core sans contrôleurs ni classes. Les routes
+//     sont déclarées par app.MapGet/MapPost(...) et les handlers sont des lambdas.
+//     Leurs paramètres sont fournis par l'INJECTION DE DÉPENDANCES (ex. demander
+//     IBasketRepository en argument suffit pour le recevoir). Plus léger qu'un
+//     ControllerBase pour un microservice à quelques endpoints.
+//
+//   - "Anti-IDOR" (Insecure Direct Object Reference) : faille où un utilisateur
+//     accède à la ressource d'autrui en devinant/modifiant un identifiant dans
+//     l'URL (ex. /api/basket/<id-d-un-autre>). PARADE appliquée ici : on N'utilise
+//     JAMAIS l'identifiant fourni par le client. Le buyerId est toujours dérivé du
+//     jeton JWT (cf. GetBuyerId). Le {buyerId} de l'URL est gardé pour compatibilité
+//     du front mais IGNORÉ.
+//
+//   - C'est ce service qui contient la FRONTIÈRE entre le monde synchrone (HTTP) et
+//     le monde asynchrone (messagerie) : voir /checkout, qui publie un événement.
+//
+// PLACE DANS LE FLUX : enregistré dans Program.cs via
+//   MapBasketApi().RequireAuthorization() -> TOUT le groupe exige un jeton valide.
+//   L'endpoint /checkout est le point de départ de la saga (cf. BasketCheckoutEvent).
+//
+// À LIRE :
+//   - AVANT : Models/CustomerBasket.cs, Models/BasketItem.cs (les données manipulées),
+//             Repositories/IBasketRepository.cs (le stockage).
+//   - APRÈS : eShop.IntegrationEvents/Messaging/RabbitMQPublisher.cs (où va l'événement
+//             publié au checkout), puis Ordering.API/.../RabbitMQConsumer.cs (réception).
+// =============================================================================
 public static class BasketApi
 {
     public static RouteGroupBuilder MapBasketApi(this IEndpointRouteBuilder app)
@@ -84,10 +107,17 @@ public static class BasketApi
                 }).ToList()
             };
 
-            // On publie d'abord, puis on supprime le panier. Le publisher utilise
-            // désormais les publisher confirms + mandatory:true : si le message n'est
-            // pas confirmé/routable, PublishAsync lève une exception AVANT le delete,
-            // donc le panier est conservé et le client peut re-checkouter sans perte.
+            // ORDRE CRUCIAL : on PUBLIE D'ABORD, on supprime le panier ENSUITE.
+            // Pourquoi cet ordre ? Si on vidait le panier avant de publier et que la
+            // publication échouait, on aurait perdu le panier ET l'événement : la
+            // commande s'évanouit. À l'inverse, en publiant d'abord :
+            //   - le publisher utilise publisher confirms + mandatory:true (cf.
+            //     RabbitMQPublisher) ; si le message n'est pas confirmé/routable,
+            //     PublishAsync LÈVE une exception AVANT le delete ;
+            //   - donc en cas d'échec le panier est intact et le client peut
+            //     re-checkouter sans rien perdre.
+            // C'est un compromis classique : on préfère un éventuel doublon (gérable
+            // par l'idempotence côté consommateur) à une perte de données.
             await publisher.PublishAsync(eventMessage, "basket-checkout");
 
             // À ce stade le broker a accusé réception de l'événement (commande prise
@@ -120,7 +150,13 @@ public static class BasketApi
         return group;
     }
 
-    // Le buyerId est toujours dérivé du jeton JWT (claim "sub", repli sur NameIdentifier).
+    // CŒUR DE LA PARADE ANTI-IDOR : la seule source autorisée du buyerId.
+    // Le ClaimsPrincipal est construit par ASP.NET à partir du jeton JWT validé
+    // (cf. AddDefaultAuthentication dans Program.cs). On lit le claim standard OIDC
+    // "sub" (subject = identifiant de l'utilisateur connecté), avec repli sur
+    // NameIdentifier selon la façon dont le jeton est mappé. Comme cette valeur vient
+    // du jeton signé par Identity.API et NON du client, elle n'est pas falsifiable :
+    // impossible d'agir sur le panier d'autrui.
     private static string? GetBuyerId(ClaimsPrincipal user)
         => user.FindFirst("sub")?.Value ?? user.FindFirstValue(ClaimTypes.NameIdentifier);
 }

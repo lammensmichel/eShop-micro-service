@@ -2,17 +2,25 @@ using MediatR;
 
 namespace Ordering.API.Application.Commands;
 
-// Commandes pilotant le cycle de vie de l'agrégat Order (point 9).
-// BuyerId est dérivé du jeton JWT côté API (anti-IDOR) : le handler vérifie
-// que la commande appartient bien à l'appelant.
+// Commandes CQRS qui pilotent les TRANSITIONS de la machine à états d'Order (voir Order.cs).
+// On distingue deux familles selon QUI les déclenche.
+//
+// 1) Transitions PILOTÉES PAR L'UTILISATEUR (via les endpoints HTTP, voir OrderingApi.cs).
+//    BuyerId est dérivé du jeton JWT côté API (anti-IDOR : Insecure Direct Object Reference) ;
+//    le handler vérifie que la commande appartient bien à l'appelant, sinon il renvoie « non
+//    trouvée » plutôt que « interdite » pour ne pas divulguer l'existence de la ressource.
 public record SetAwaitingValidationCommand(int OrderId, string BuyerId) : IRequest<Unit>;
 
 public record ShipOrderCommand(int OrderId, string BuyerId) : IRequest<Unit>;
 
 public record CancelOrderCommand(int OrderId, string BuyerId) : IRequest<Unit>;
 
-// Commandes pilotées par les événements de la saga (Chantier B), et non par l'utilisateur.
-// Elles ne font pas de contrôle de propriété anti-IDOR (la source est le bus interne).
+// 2) Transitions PILOTÉES PAR LA SAGA. Une « saga » est un enchaînement de transactions
+//    locales réparties sur plusieurs services, coordonnées par des integration events sur
+//    le bus (il n'y a pas de transaction distribuée). Ici Ordering réagit aux events des
+//    autres services (période de grâce, paiement) que le RabbitMQConsumer traduit en ces
+//    commandes. Elles ne font PAS de contrôle de propriété anti-IDOR : la source n'est pas
+//    un utilisateur mais le bus interne, déjà de confiance.
 
 // Déclenchée à la réception de GracePeriodConfirmedIntegrationEvent : passe la commande
 // en AwaitingValidation puis confirme le stock de façon SIMPLIFIÉE (auto-confirmée,

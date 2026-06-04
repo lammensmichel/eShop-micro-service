@@ -15,14 +15,30 @@ namespace Microsoft.Extensions.Hosting;
 // ============================================================================
 // eShop.ServiceDefaults — le « socle commun » de TOUS les services Aspire.
 // ----------------------------------------------------------------------------
-// Plutôt que de recopier la même plomberie d'observabilité/résilience/santé dans
-// chaque Program.cs (Catalog, Basket, Ordering, Identity, WebApp, et les deux
-// workers OrderProcessor/PaymentProcessor), on la factorise ici sous forme de
-// méthodes d'extension. Chaque service appelle simplement AddServiceDefaults()
-// (et MapDefaultEndpoints() côté API web) au démarrage.
+// RÔLE : factoriser, sous forme de méthodes d'extension, toute la plomberie
+// transverse (cross-cutting concerns) qu'un service distribué doit configurer.
+// Plutôt que de recopier la même configuration dans chaque Program.cs (Catalog,
+// Basket, Ordering, Identity, WebApp, et les deux workers OrderProcessor/
+// PaymentProcessor), chaque service appelle simplement AddServiceDefaults() — et,
+// côté API web seulement, MapDefaultEndpoints() — au démarrage.
 //
-// L'intérêt pédagogique : voir comment Aspire mutualise les préoccupations
-// transverses (cross-cutting concerns) d'un système distribué.
+// CE QUE LE SOCLE APPORTE (et le jargon associé) :
+//   - OpenTelemetry : standard d'observabilité unifié, trois SIGNAUX —
+//       * logs    : messages journalisés ;
+//       * métriques : compteurs/jauges (req/s, durées, GC...) ;
+//       * traces  : « spans » reliés qui suivent UNE requête à travers PLUSIEURS
+//                   services (traçage distribué). Tout est exporté en OTLP
+//                   (OpenTelemetry Protocol) vers le collecteur du dashboard Aspire.
+//   - Health checks : sondes de santé, avec deux notions distinctes —
+//       * liveness  (/alive)  : « le process est-il vivant ? » ;
+//       * readiness (/health) : « peut-il accepter du trafic ? » (toutes deps OK).
+//   - Résilience HTTP via Polly : retries, circuit breaker, timeouts appliqués
+//     automatiquement à tous les HttpClient (une dépendance distante peut flancher).
+//   - Service discovery : appeler un service par son NOM logique, pas une URL en dur.
+//   - AddDefaultAuthentication : validation des jetons JWT émis par Identity (appelée
+//     par les API protégées ; PAS par les workers, qui n'exposent aucune API HTTP).
+//
+// L'intérêt pédagogique : voir comment Aspire mutualise ces préoccupations transverses.
 // Doc : https://aka.ms/aspire/service-defaults
 // ============================================================================
 public static class Extensions

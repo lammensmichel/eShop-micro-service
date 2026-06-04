@@ -7,14 +7,46 @@ using RabbitMQ.Client.Events;
 
 namespace OrderProcessor;
 
-// Worker « grace period » : consomme OrderStatusChangedToSubmittedIntegrationEvent
-// (routing key "ordering-order-submitted"), attend une période de grâce configurable,
-// puis publie GracePeriodConfirmedIntegrationEvent (routing "ordering-grace-period-confirmed").
+// ============================================================================
+// GracePeriodWorker — l'étape « période de grâce » de la saga de commande.
+// ----------------------------------------------------------------------------
+// RÔLE : entre le moment où la commande est SOUMISE et celui où Ordering la
+// confirme, on laisse à l'acheteur une fenêtre d'annulation : la « période de
+// grâce ». Ce worker matérialise cette fenêtre. Concrètement il :
+//   1. CONSOMME  OrderStatusChangedToSubmittedIntegrationEvent
+//                (routing key "ordering-order-submitted") ;
+//   2. ATTEND    une période de grâce configurable (défaut 10 s) ;
+//   3. PUBLIE    GracePeriodConfirmedIntegrationEvent
+//                (routing key "ordering-grace-period-confirmed").
 //
-// Pattern de connexion/canal/consommation calqué sur le RabbitMQConsumer d'Ordering :
-// exchange direct durable partagé "eshop_event_bus", queue durable propre au worker,
-// liaison sur SA routing key, autoAck:false, prefetch=1, ack après publication réussie,
-// nack(requeue:false) si le message est illisible (échec déterministe).
+// CONCEPT ILLUSTRÉ — le « worker » (BackgroundService) + la « chorégraphie saga ».
+//   - Un BackgroundService est un service de fond hébergé : pas d'API HTTP, juste
+//     une boucle qui tourne tant que l'application vit. .NET appelle ExecuteAsync
+//     au démarrage et fournit un CancellationToken déclenché à l'arrêt.
+//   - Une saga « chorégraphiée » coordonne une transaction longue répartie sur
+//     plusieurs services SANS chef d'orchestre central : chaque service réagit à
+//     un événement reçu et en émet un nouveau. Le flux complet n'existe nulle part
+//     en un seul endroit ; il « émerge » de la somme des réactions. Ce worker est
+//     un maillon de cette chaîne (voir le schéma complet dans AppHost.cs).
+//
+// PLACE DANS L'ENSEMBLE :
+//   Ordering -- ordering-order-submitted --> [CE WORKER] -- ordering-grace-period-confirmed --> Ordering
+//
+// CONCEPTS RabbitMQ utilisés (pattern calqué sur le RabbitMQConsumer d'Ordering) :
+//   - exchange "direct" durable partagé "eshop_event_bus" : un aiguilleur qui route
+//     chaque message vers les queues liées à SA routing key (correspondance exacte) ;
+//   - queue durable propre au worker : survit aux redémarrages du broker ;
+//   - liaison (binding) queue<->exchange sur la routing key écoutée ;
+//   - autoAck:false : accusé de réception MANUEL (on contrôle quand le message est
+//     « consommé pour de bon ») ;
+//   - prefetch=1 : au plus un message non acquitté à la fois ;
+//   - ack après publication réussie ; nack(requeue:false) si message illisible
+//     (échec déterministe : le rejouer ne servirait à rien -> rejet définitif).
+//
+// IDEMPOTENCE / REJOUABILITÉ : un message peut être redélivré (redémarrage, requeue).
+// Le traitement doit donc pouvoir être rejoué sans dommage. Ici, republier
+// GracePeriodConfirmed pour la même commande est inoffensif côté Ordering, qui
+// ignore une confirmation déjà appliquée (transition d'état idempotente).
 public class GracePeriodWorker : BackgroundService
 {
     private readonly IEventBus _eventBus;
@@ -36,6 +68,11 @@ public class GracePeriodWorker : BackgroundService
     // Routing key publiée : grace period écoulée.
     private const string GracePeriodConfirmedRoutingKey = "ordering-grace-period-confirmed";
 
+    // Les dépendances sont injectées par le conteneur DI (configuré dans Program.cs) :
+    //   - IEventBus  : le bus partagé pour PUBLIER l'événement suivant (abstraction
+    //                  au-dessus de RabbitMQ -> on ne dépend pas de l'implémentation) ;
+    //   - ILogger    : journalisation, remontée vers OpenTelemetry via ServiceDefaults ;
+    //   - IConfiguration : accès aux réglages (chaîne de connexion, durée de grâce).
     public GracePeriodWorker(
         IEventBus eventBus,
         ILogger<GracePeriodWorker> logger,
@@ -43,15 +80,24 @@ public class GracePeriodWorker : BackgroundService
     {
         _eventBus = eventBus;
         _logger = logger;
+        // La chaîne de connexion "rabbitmq" n'est PAS codée en dur : Aspire l'injecte
+        // dans la configuration grâce au WithReference(rabbitmq) déclaré dans l'AppHost.
         _connectionString = configuration.GetConnectionString("rabbitmq")!;
 
         // Période de grâce configurable via "GracePeriod:Seconds" (défaut 10 s).
+        // Volontairement courte ici pour observer la saga rapidement en démo.
         var seconds = configuration.GetValue("GracePeriod:Seconds", 10);
         _gracePeriod = TimeSpan.FromSeconds(seconds);
     }
 
+    // ExecuteAsync = la boucle de fond du worker. Appelée une fois au démarrage par
+    // l'hôte .NET. On y établit la connexion RabbitMQ, on déclare la topologie
+    // (exchange + queue + binding), on s'abonne, puis on « dort » jusqu'à l'arrêt.
+    // Le stoppingToken est déclenché quand l'application s'arrête (Ctrl+C, SIGTERM…).
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Mémorisé en champ pour que le handler d'événement (OnMessageReceivedAsync,
+        // appelé plus tard par la lib RabbitMQ) puisse propager l'annulation à Task.Delay.
         _stoppingToken = stoppingToken;
         var factory = new ConnectionFactory { Uri = new Uri(_connectionString) };
         _connection = await factory.CreateConnectionAsync(stoppingToken);
@@ -81,12 +127,14 @@ public class GracePeriodWorker : BackgroundService
             routingKey: SubmittedRoutingKey,
             cancellationToken: stoppingToken);
 
+        // Le consommateur est piloté par événement : à chaque message reçu, la lib
+        // RabbitMQ déclenche ReceivedAsync -> notre handler OnMessageReceivedAsync.
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += OnMessageReceivedAsync;
 
         await _channel.BasicConsumeAsync(
             queue: QueueName,
-            autoAck: false,
+            autoAck: false, // accusé manuel : c'est NOUS qui décidons quand acquitter
             consumer: consumer,
             cancellationToken: stoppingToken);
 
@@ -94,13 +142,21 @@ public class GracePeriodWorker : BackgroundService
             "OrderProcessor démarré : écoute '{RoutingKey}', période de grâce {Grace}s",
             SubmittedRoutingKey, _gracePeriod.TotalSeconds);
 
+        // La consommation est désormais pilotée par les callbacks ci-dessus. Il ne
+        // reste plus qu'à empêcher ExecuteAsync de se terminer (ce qui arrêterait le
+        // worker) : on attend « indéfiniment » jusqu'à ce que le stoppingToken annule
+        // ce Task.Delay (à l'arrêt de l'application).
         await Task.Delay(Timeout.Infinite, stoppingToken);
     }
 
+    // Handler appelé par RabbitMQ pour CHAQUE message livré sur notre queue.
+    // ea (BasicDeliverEventArgs) porte le corps brut + le DeliveryTag, l'identifiant
+    // de livraison qu'on utilise pour acquitter (ack) ou rejeter (nack) le message.
     private async Task OnMessageReceivedAsync(object sender, BasicDeliverEventArgs ea)
     {
         var channel = _channel!;
         var stoppingToken = _stoppingToken;
+        // Le corps du message est un tableau d'octets (le JSON de l'événement sérialisé).
         var json = Encoding.UTF8.GetString(ea.Body.ToArray());
 
         OrderStatusChangedToSubmittedIntegrationEvent evt;
@@ -140,8 +196,11 @@ public class GracePeriodWorker : BackgroundService
 
             await _eventBus.PublishAsync(confirmed, GracePeriodConfirmedRoutingKey);
 
-            // Ack seulement après publication réussie : si la publication échoue, le catch
-            // ci-dessous requeue le message pour réessayer plus tard.
+            // Ordre IMPORTANT : on acquitte SEULEMENT après une publication réussie.
+            // Ainsi, si la publication échoue, le catch ci-dessous requeue le message
+            // et on réessaiera plus tard. C'est une garantie « at-least-once » : on
+            // préfère traiter potentiellement deux fois (d'où le besoin d'idempotence)
+            // plutôt que de perdre un message en l'acquittant trop tôt.
             await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
 
             _logger.LogInformation(
@@ -164,6 +223,9 @@ public class GracePeriodWorker : BackgroundService
         }
     }
 
+    // Arrêt propre : libère le canal puis la connexion RabbitMQ. Appelé par l'hôte
+    // lors d'un arrêt gracieux. Tout message non acquitté est automatiquement
+    // redélivré par le broker à un consommateur ultérieur (ici, au redémarrage).
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_channel is not null) await _channel.DisposeAsync();

@@ -7,12 +7,19 @@ using Ordering.API.Infrastructure.Outbox;
 
 namespace Ordering.API.Infrastructure;
 
+// UNIT OF WORK + mapping de persistance du service. Un DbContext EF Core EST un Unit of Work :
+// il suit les changements des entités chargées et les écrit en bloc au SaveChangesAsync.
+// Deux responsabilités tutorielles à retenir ici :
+//   1) OnModelCreating : comment les concepts DDD se traduisent en schéma relationnel
+//      (value object « owned », enumeration class convertie en entier, clé étrangère shadow) ;
+//   2) override de SaveChangesAsync : le DISPATCH des domain events est centralisé ici, ce
+//      qui évite de le répéter dans chaque handler (voir CreateOrderCommandHandler).
 public class OrderingDbContext : DbContext
 {
     // IMediator est injecté par propriété (et non par constructeur) car le DbContext
     // est mis en pool par Aspire (AddNpgsqlDbContext) : le pooling exige un constructeur
-    // unique acceptant uniquement DbContextOptions. La propriété est renseignée par le
-    // pipeline de dispatch (point 5) ; elle reste nulle au design-time (migrations).
+    // unique acceptant uniquement DbContextOptions. La propriété est renseignée par
+    // OrderRepository à sa construction ; elle reste nulle au design-time (migrations).
     public IMediator? Mediator { get; set; }
 
     public OrderingDbContext(DbContextOptions<OrderingDbContext> options) : base(options) { }
@@ -76,9 +83,17 @@ public class OrderingDbContext : DbContext
         });
     }
 
-    // Dispatch automatique des domain events (point 5) :
-    // on persiste d'abord (commit), puis on publie les events des entités suivies,
-    // et enfin on nettoie. Le dispatch manuel dans les handlers est supprimé.
+    // DISPATCH AUTOMATIQUE DES DOMAIN EVENTS sur SaveChanges. Ordre :
+    //   1) base.SaveChangesAsync : EF écrit les changements en base (INSERT/UPDATE) et, pour
+    //      une entité neuve, AFFECTE son Id généré -> les handlers peuvent l'utiliser ;
+    //   2) on publie ensuite les events des entités suivies via MediatR.
+    // Nuance importante : « écrit en base » ne veut PAS dire « committé ». Quand le flux vient
+    // du RabbitMQConsumer, ce SaveChanges s'exécute DANS une transaction ouverte plus haut ;
+    // les handlers (qui déposent des entrées outbox) écrivent donc dans la MÊME transaction,
+    // et tout est committé ensemble par le consumer. C'est ce qui rend « changement métier +
+    // outbox » atomique : si un handler échoue, la transaction entière est annulée.
+    // Faire le dispatch ici (et non manuellement dans chaque handler) garantit qu'il a TOUJOURS
+    // lieu, sans duplication.
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         var result = await base.SaveChangesAsync(cancellationToken);

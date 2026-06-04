@@ -3,8 +3,11 @@ using RabbitMQ.Client;
 
 namespace Ordering.API.Infrastructure.Messaging;
 
-// Health check RabbitMQ (point 12) : ouvre une connexion courte vers le broker
-// pour vérifier sa disponibilité. Tout est asynchrone (aucun appel bloquant).
+// HEALTH CHECK RabbitMQ : sonde de santé branchée sur l'infrastructure de health checks
+// d'ASP.NET (voir Program.cs / AddHealthChecks). Elle ouvre une connexion courte vers le
+// broker pour vérifier qu'il est joignable. Le tag "ready" la classe parmi les checks de
+// « readiness » (le service est-il prêt à recevoir du trafic ?), exposés par MapDefaultEndpoints
+// de ServiceDefaults et utilisés par Aspire/l'orchestrateur. Tout est asynchrone (non bloquant).
 public class RabbitMQHealthCheck : IHealthCheck
 {
     private readonly string _connectionString;

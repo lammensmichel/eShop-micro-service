@@ -4,9 +4,17 @@ using Ordering.API.Domain.SeedWork;
 
 namespace Ordering.API.Application.Commands;
 
-// Handlers des transitions du cycle de vie de la commande (point 9).
-// La persistance déclenche le dispatch automatique des domain events
-// via l'override de SaveChangesAsync du DbContext.
+// Handlers des transitions du cycle de vie d'Order. Tous suivent le MÊME patron, qui résume
+// l'écriture en CQRS/DDD :
+//   1) charger l'agrégat COMPLET via le repository (GetAsync) ;
+//   2) (transitions utilisateur) vérifier la propriété anti-IDOR ;
+//   3) appeler une MÉTHODE MÉTIER de l'agrégat (Ship, Cancel...) — c'est ELLE qui valide la
+//      transition (machine à états) et lève le domain event ; le handler ne décide de rien ;
+//   4) Update + SaveChangesAsync.
+// Le SaveChangesAsync déclenche le DISPATCH automatique des domain events (override dans
+// OrderingDbContext) -> les handlers d'events s'exécutent, certains déposant un integration
+// event dans l'outbox. Tout cela se passe dans la transaction ouverte par RabbitMQConsumer
+// quand la commande vient de la saga -> atomicité changement métier + outbox + idempotence.
 
 public class SetAwaitingValidationCommandHandler : IRequestHandler<SetAwaitingValidationCommand, Unit>
 {
@@ -86,7 +94,7 @@ public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, Uni
     }
 }
 
-// --- Handlers des transitions pilotées par la saga (Chantier B) ---
+// --- Handlers des transitions pilotées par la saga (déclenchés par le RabbitMQConsumer) ---
 
 // GracePeriodConfirmed -> AwaitingValidation puis confirmation du stock (simplifiée).
 // SetStockConfirmed() lève OrderStockConfirmedDomainEvent dont le handler enfile

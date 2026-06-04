@@ -5,10 +5,23 @@ using Ordering.API.Application.Queries;
 
 namespace Ordering.API.Apis;
 
+// COUCHE HTTP (Minimal APIs) : le point d'entrée SYNCHRONE du service, déclenché par
+// l'utilisateur (le point d'entrée asynchrone, lui, est RabbitMQConsumer). Regroupe tous
+// les endpoints sous /api/orders via une méthode d'extension appelée depuis Program.cs.
+//
+// Rôle volontairement MINCE : chaque endpoint ne fait que (1) extraire le buyerId du jeton,
+// (2) construire une commande/requête, (3) la déléguer à MediatR. Aucune logique métier ici —
+// elle vit dans les handlers (Application/) et le domaine. C'est la traduction « HTTP -> CQRS ».
+//
+// Sécurité — anti-IDOR (Insecure Direct Object Reference) : on n'accorde JAMAIS confiance au
+// buyerId fourni par le client (paramètre d'URL ou corps). On le dérive TOUJOURS du jeton JWT,
+// sinon un utilisateur pourrait lire/modifier les commandes d'un autre en changeant l'Id.
 public static class OrderingApi
 {
     public static RouteGroupBuilder MapOrderingApi(this IEndpointRouteBuilder app)
     {
+        // MapGroup : préfixe commun à tous les endpoints. RequireAuthorization() est appliqué
+        // sur le groupe dans Program.cs -> tous ces endpoints exigent un jeton valide.
         var group = app.MapGroup("/api/orders");
 
         // GET /api/orders/{buyerId}

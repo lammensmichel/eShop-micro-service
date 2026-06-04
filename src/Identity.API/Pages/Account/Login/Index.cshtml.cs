@@ -6,9 +6,21 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace Identity.API.Pages.Account.Login;
 
-// Code-behind de la page de connexion (Razor Page).
-// C'est l'écran vers lequel le navigateur est redirigé pendant le flux Authorization Code :
-// l'utilisateur saisit ses identifiants, puis on le renvoie vers IdentityServer (ReturnUrl).
+// ============================================================================
+// FICHIER : Login/Index.cshtml.cs  —  code-behind de la page de CONNEXION.
+//
+// CONCEPT : une Razor Page sépare le MARKUP (Index.cshtml, hors de notre champ)
+//   du « code-behind » (ce fichier). PageModel = la classe qui porte l'état de la
+//   page et ses gestionnaires OnGet/OnPost.
+//
+// PLACE DANS LE FLUX OIDC (Authorization Code + PKCE, cf. Config.cs) :
+//   c'est l'écran vers lequel IdentityServer redirige le navigateur à l'étape 2
+//   (« l'utilisateur s'authentifie »). L'utilisateur saisit identifiant + mot de
+//   passe ; en cas de succès on le renvoie vers le ReturnUrl, c.-à-d. l'endpoint
+//   d'autorisation OIDC qui poursuivra l'émission du code puis des jetons.
+//
+// À LIRE avec Logout/Index.cshtml.cs (le pendant déconnexion).
+// ============================================================================
 public class LoginModel : PageModel
 {
     // SignInManager : service Identity qui vérifie les identifiants et crée la session de connexion.
@@ -45,8 +57,11 @@ public class LoginModel : PageModel
 
         Console.WriteLine($"Login attempt: Username={Username}, ReturnUrl={ReturnUrl}");
 
-        // Vérifie identifiants + mot de passe. isPersistent: false => cookie de session
-        // (non persistant). lockoutOnFailure: false => pas de verrouillage après échecs (démo).
+        // PasswordSignInAsync vérifie l'identifiant et compare le mot de passe à son
+        // HASH stocké (jamais comparé en clair), puis crée le cookie de session.
+        // isPersistent: false => cookie de session (disparaît à la fermeture du
+        // navigateur). lockoutOnFailure: false => pas de verrouillage après plusieurs
+        // échecs (acceptable en démo ; en prod on le mettrait à true).
         var result = await _signInManager.PasswordSignInAsync(
             Username, Password, isPersistent: false, lockoutOnFailure: false);
 

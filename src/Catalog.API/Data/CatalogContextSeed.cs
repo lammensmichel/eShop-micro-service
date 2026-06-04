@@ -2,14 +2,27 @@ using Catalog.API.Models;
 
 namespace Catalog.API.Data;
 
-// Seed = jeu de données initial inséré au démarrage (appelé depuis Program.cs,
-// juste après l'application des migrations). Permet d'avoir un catalogue
-// fonctionnel sans saisie manuelle dès le premier lancement.
+// ============================================================================
+// FICHIER : CatalogContextSeed.cs  —  le PEUPLEMENT initial de la base.
+//
+// CONCEPT : « seed » (semer). C'est l'insertion d'un jeu de données de départ
+//   au tout premier démarrage, pour que l'application soit utilisable sans
+//   saisie manuelle. Appelé depuis Program.cs JUSTE APRÈS l'application des
+//   migrations (la base existe, mais elle est vide).
+//
+// CONCEPT-CLÉ : l'IDEMPOTENCE. Une opération est « idempotente » si l'exécuter
+//   plusieurs fois produit le même état final qu'une seule fois. Le service
+//   redémarre souvent (dev, conteneurs Aspire) et ce code tourne à CHAQUE
+//   démarrage ; sans garde, on réinsérerait les mêmes produits en double. La
+//   garde ci-dessous (« si déjà rempli, on sort ») rend le seed idempotent.
+//
+// À LIRE après CatalogDbContext.cs, avant Apis/CatalogApi.cs.
+// ============================================================================
 public static class CatalogContextSeed
 {
     public static async Task SeedAsync(CatalogDbContext context)
     {
-        // Garde d'idempotence : si la base contient déjà des données de référence,
+        // GARDE D'IDEMPOTENCE : si la base contient déjà des données de référence,
         // on s'arrête. Ainsi un redémarrage de l'API ne réinsère pas de doublons.
         if (context.CatalogBrands.Any() || context.CatalogTypes.Any())
             return; // Déjà seedé, on ne refait pas
@@ -33,8 +46,11 @@ public static class CatalogContextSeed
             new() { Type = "USB Memory Stick" }
         };
 
-        // On persiste d'abord marques et types : EF leur attribue alors leurs Id,
-        // qui serviront ensuite à rattacher les produits via les navigations.
+        // ORDRE D'INSERTION EN DEUX TEMPS — pourquoi ? Les produits référencent une
+        // marque et un type. On persiste donc d'abord les tables de référence : au
+        // SaveChanges, EF demande à Postgres les Id auto-générés et remet à jour les
+        // objets "brands"/"types" en mémoire. Ces objets, désormais porteurs de leur
+        // Id, pourront servir à rattacher les produits via leurs navigations.
         await context.CatalogBrands.AddRangeAsync(brands);
         await context.CatalogTypes.AddRangeAsync(types);
         await context.SaveChangesAsync();

@@ -6,9 +6,19 @@ using Identity.API.Models;
 
 namespace Identity.API.Pages.Account.Logout;
 
-// Code-behind de la page de déconnexion (Razor Page).
-// Appelée par le front lors d'un logout OIDC ; "logoutId" identifie le contexte de
-// déconnexion côté IdentityServer (notamment l'URL de retour post-logout du client).
+// ============================================================================
+// FICHIER : Logout/Index.cshtml.cs  —  code-behind de la page de DÉCONNEXION.
+//
+// PLACE DANS LE FLUX OIDC : pendant du Login. Le front déclenche un logout OIDC ;
+//   IdentityServer route le navigateur ici. Le paramètre "logoutId" identifie le
+//   contexte de déconnexion côté serveur (il porte notamment l'URL de retour
+//   post-logout déclarée par le client dans Config.cs / PostLogoutRedirectUris).
+//
+// Ce qu'on fait : supprimer le cookie de session (SignOutAsync) puis renvoyer le
+//   navigateur vers cette URL de retour validée, sinon vers l'accueil.
+//
+// À LIRE juste après Login/Index.cshtml.cs.
+// ============================================================================
 public class LogoutModel : PageModel
 {
     private readonly SignInManager<ApplicationUser> _signInManager;

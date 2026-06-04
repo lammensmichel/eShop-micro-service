@@ -5,15 +5,39 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Catalog.API.Apis;
 
-// Regroupe les endpoints du catalogue (style "minimal API").
-// La méthode d'extension MapCatalogApi est appelée dans Program.cs (app.MapCatalogApi()).
-// Sécurité : la lecture (GET) est PUBLIQUE, l'écriture (POST/PUT/DELETE) est réservée
-// au rôle "Admin" via l'attribut [Authorize(Roles = "Admin")] sur chaque endpoint.
+// ============================================================================
+// FICHIER : CatalogApi.cs  —  les ENDPOINTS HTTP du catalogue.
+//
+// CONCEPT : « minimal API ». C'est le style léger d'ASP.NET Core où l'on déclare
+//   une route et son traitement par un simple appel (app.MapGet("/...", handler))
+//   au lieu d'écrire une classe Controller + des attributs. Le handler est une
+//   lambda ; ses paramètres sont fournis AUTOMATIQUEMENT par l'injection de
+//   dépendances (DI) ou liés depuis la route / le corps de la requête.
+//
+// PATTERN ICI : on regroupe tous les endpoints dans une MÉTHODE D'EXTENSION
+//   (MapCatalogApi) appelée une fois dans Program.cs (app.MapCatalogApi()). Cela
+//   garde Program.cs lisible et range les routes par domaine.
+//
+// SÉCURITÉ — le POURQUOI (concept central de ce service) :
+//   - La LECTURE (GET) est PUBLIQUE : n'importe qui, même non connecté, peut
+//     consulter le catalogue. C'est une vitrine ; pas de raison de la protéger.
+//   - L'ÉCRITURE (POST/PUT/DELETE) est RÉSERVÉE aux administrateurs, via
+//     l'attribut [Authorize(Roles = "Admin")]. On ne veut pas qu'un client
+//     lambda modifie les produits.
+//   Cette asymétrie lecture-publique / écriture-restreinte est le point
+//   pédagogique majeur du fichier. Le câblage de l'authentification (validation
+//   du jeton JWT) se fait dans Program.cs ; ici on ne fait qu'EXIGER un rôle.
+//
+// À LIRE après CatalogContextSeed.cs, avant Program.cs. Pour comprendre d'OÙ
+//   vient le rôle "Admin", enchaînez ensuite sur Identity.API (Config.cs +
+//   CustomProfileService.cs + ApplicationDbContextSeed.cs).
+// ============================================================================
 public static class CatalogApi
 {
     public static RouteGroupBuilder MapCatalogApi(this IEndpointRouteBuilder app)
     {
-        // Préfixe commun à toutes les routes ci-dessous : /api/catalog/...
+        // MapGroup : préfixe commun appliqué à toutes les routes ci-dessous.
+        // Toutes deviennent /api/catalog/... (on évite de répéter le préfixe).
         var group = app.MapGroup("/api/catalog");
 
         // GET — accessible à tous (même non connecté)
@@ -40,9 +64,14 @@ public static class CatalogApi
             return item is null ? Results.NotFound() : Results.Ok(item);
         });
 
-        // POST/PUT/DELETE — Admin seulement
-        // L'attribut [Authorize(Roles = "Admin")] exige un jeton valide portant le rôle
-        // "Admin" (claim "role"). Seule "alice" possède ce rôle parmi les utilisateurs seedés.
+        // POST/PUT/DELETE — Admin seulement.
+        // [Authorize(Roles = "Admin")] = ce endpoint exige (1) un jeton valide ET
+        // (2) que ce jeton porte un claim "role" valant "Admin".
+        //   - Un "claim" est une information attestée par le serveur d'identité et
+        //     transportée dans le jeton (ex. l'identité de l'utilisateur, ses rôles).
+        //   - Le claim "role" est rempli côté Identity.API par CustomProfileService.
+        // Parmi les utilisateurs seedés, seule "alice" a le rôle "Admin" (bob ne l'a
+        // pas) : seul son jeton franchira cette barrière.
         group.MapPost("/items", [Authorize(Roles = "Admin")] async (CatalogItem item, CatalogDbContext db) =>
         {
             db.CatalogItems.Add(item);

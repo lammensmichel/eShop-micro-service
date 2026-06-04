@@ -2,10 +2,20 @@ using eShop.IntegrationEvents.Messaging;
 
 namespace eShop.IntegrationEvents.Events;
 
-// Émis (via l'outbox d'Ordering.API) lorsque le stock d'une commande est confirmé.
-// Routing key : "ordering-order-stock-confirmed". Consommé par PaymentProcessor (étape 2),
-// qui simule alors le paiement.
-// Id (hérité de IntegrationEvent) sert de clé d'idempotence côté consommateur.
+// =============================================================================
+// MAILLON DE SAGA n°4. Voir le schéma complet en tête de BasketCheckoutEvent.cs.
+//
+// QUI ÉMET     : Ordering.API (via l'outbox, cf. note outbox dans
+//                OrderStatusChangedToSubmittedIntegrationEvent.cs) une fois le stock
+//                confirmé pour la commande.
+// ROUTING KEY  : "ordering-order-stock-confirmed".
+// QUI CONSOMME : PaymentProcessor (étape 2), qui SIMULE le paiement et répond par
+//                l'un des deux événements terminaux ci-dessous.
+// SUITE (branche) : OrderPaymentSucceededIntegrationEvent (succès)
+//                   OU OrderPaymentFailedIntegrationEvent (échec).
+//
+// Id (hérité de IntegrationEvent) = clé d'idempotence côté consommateur.
+// =============================================================================
 public record OrderStockConfirmedIntegrationEvent : IntegrationEvent
 {
     public required int OrderId { get; init; }

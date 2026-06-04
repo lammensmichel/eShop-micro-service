@@ -4,11 +4,31 @@ using StackExchange.Redis;
 
 namespace Basket.API.Repositories;
 
-// Implémentation Redis du dépôt de paniers. Modèle de stockage très simple :
-// une clé string par acheteur (clé = BuyerId) dont la valeur est le panier
-// sérialisé en JSON. Redis convient ici car le panier est une donnée volatile,
-// fortement sollicitée en lecture/écriture, et qui n'a pas besoin de requêtes
-// relationnelles ni de transactions complexes.
+// =============================================================================
+// FICHIER : RedisBasketRepository.cs
+// RÔLE    : implémentation concrète d'IBasketRepository au-dessus de Redis.
+// CONCEPT : "PANIER EN CACHE REDIS" — stockage clé-valeur + expiration (TTL).
+//
+//   Redis est une base de données EN MÉMOIRE (très rapide) organisée en couples
+//   clé → valeur. Ici le modèle est minimal :
+//       clé   = BuyerId
+//       valeur= le CustomerBasket entier sérialisé en JSON
+//   Trois opérations seulement : GET (lire), SET avec durée de vie (écrire),
+//   DEL (supprimer). Pas de jointures, pas de transactions complexes : le panier
+//   n'en a pas besoin, et on gagne en simplicité/performance.
+//
+//   "TTL" (Time To Live) : le SET pose une expiration (30 j ici). Un panier
+//   abandonné s'efface tout seul — pas de tâche de ménage à écrire. C'est un
+//   avantage structurel du cache pour une donnée volatile.
+//
+//   La connexion Redis (IConnectionMultiplexer) est un SINGLETON thread-safe
+//   fourni par AddRedisClient (cf. Program.cs) : on la partage entre toutes les
+//   requêtes ; GetDatabase() ne renvoie qu'un handle léger.
+//
+// À LIRE :
+//   - AVANT : IBasketRepository.cs (le contrat), CustomerBasket.cs (l'objet stocké).
+//   - APRÈS : Program.cs (où AddRedisClient et ce dépôt sont enregistrés).
+// =============================================================================
 public class RedisBasketRepository : IBasketRepository
 {
     private readonly IDatabase _database;

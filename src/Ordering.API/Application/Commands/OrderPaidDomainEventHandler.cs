@@ -3,8 +3,13 @@ using Ordering.API.Domain.Events;
 
 namespace Ordering.API.Application.Commands;
 
-// Le passage Paid ne produit aucun event d'intégration sortant pour la démo
-// (la saga se poursuit localement par Ship()). On se contente de journaliser.
+// HANDLER DE DOMAIN EVENT (réaction à un fait métier, dispatché par MediatR après
+// SaveChangesAsync — voir OrderingDbContext). Pour le patron général, voir
+// OrderCancelledDomainEventHandler.
+//
+// Le passage Paid ne produit aucun integration event sortant ici : la saga se poursuit
+// LOCALEMENT, car le handler de commande ConfirmOrderPayment enchaîne directement SetPaid()
+// puis Ship() dans la même transaction. On se contente donc de journaliser.
 public class OrderPaidDomainEventHandler : INotificationHandler<OrderPaidDomainEvent>
 {
     private readonly ILogger<OrderPaidDomainEventHandler> _logger;

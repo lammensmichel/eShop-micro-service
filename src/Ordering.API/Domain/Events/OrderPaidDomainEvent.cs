@@ -3,5 +3,8 @@ using Ordering.API.Domain.SeedWork;
 
 namespace Ordering.API.Domain.Events;
 
-// Levé par l'agrégat Order lorsque le paiement est confirmé (Paid).
+// Domain event « commande payée », levé par Order.SetPaid().
+// Même patron que OrderPlacedDomainEvent (à lire en premier). Son handler se contente
+// de journaliser : dans cette implémentation, la suite de la saga (l'expédition) est
+// enchaînée localement par le handler de commande, sans repasser par le bus.
 public record OrderPaidDomainEvent(Order Order) : IDomainEvent;

@@ -12,11 +12,25 @@ using Ordering.API.Infrastructure.Idempotency;
 
 namespace Ordering.API.Infrastructure.Messaging;
 
-// Consumer unique d'Ordering : une seule queue ("ordering-events") liée à PLUSIEURS
-// routing keys de l'exchange direct partagé. Le dispatch se fait selon ea.RoutingKey :
-// chaque routing key désérialise vers son type d'event et envoie la commande/transition
-// MediatR correspondante. Idempotence, DLQ, compteur de tentatives, prefetch=1, ack/nack
-// et transaction (CreateExecutionStrategy + BeginTransaction) sont conservés à l'identique.
+// POINT D'ENTRÉE ASYNCHRONE du service : consomme les integration events des autres services
+// sur RabbitMQ et les transforme en commandes MediatR. C'est le pendant « réception » du
+// pattern Outbox (côté émission : IntegrationEventLogPublisher).
+//
+// BackgroundService = service hébergé tournant en tâche de fond pour toute la durée de vie
+// de l'application (ExecuteAsync est lancé au démarrage). Ici il ouvre une connexion au
+// broker et écoute en continu.
+//
+// Vue d'ensemble du traitement d'un message (les garanties clés, détaillées plus bas) :
+//   1) une seule queue ("ordering-events") liée à PLUSIEURS routing keys de l'exchange direct
+//      partagé ; le dispatch se fait selon ea.RoutingKey (BuildHandler) ;
+//   2) IDEMPOTENCE : on ignore un event déjà traité (table ProcessedIntegrationEvents) — le
+//      bus garantit « au moins une fois », donc un même message peut être re-livré ;
+//   3) TRANSACTION : changement métier + clé d'idempotence + entrées outbox sont committés
+//      ensemble (tout ou rien) ;
+//   4) ACK MANUEL : on n'acquitte (BasicAck) qu'APRÈS commit réussi ; en cas d'échec on
+//      réessaie un nombre borné de fois, puis on route le message « poison » vers une DLQ
+//      (Dead-Letter Queue) pour ne pas bloquer la file.
+// Détails de chaque garantie en commentaire à l'endroit concerné.
 public class RabbitMQConsumer : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
@@ -30,7 +44,8 @@ public class RabbitMQConsumer : BackgroundService
     // Queue unique d'Ordering liée à toutes les routing keys consommées.
     private const string QueueName = "ordering-events";
 
-    // Routing keys consommées par Ordering (saga Chantier B + checkout existant).
+    // Routing keys consommées par Ordering : le checkout (création de commande) et les
+    // étapes de la saga (période de grâce, paiement réussi/échoué).
     private const string BasketCheckoutRoutingKey = "basket-checkout";
     private const string GracePeriodConfirmedRoutingKey = "ordering-grace-period-confirmed";
     private const string PaymentSucceededRoutingKey = "payment-succeeded";

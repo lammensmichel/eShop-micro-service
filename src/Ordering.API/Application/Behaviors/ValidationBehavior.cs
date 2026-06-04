@@ -3,9 +3,18 @@ using MediatR;
 
 namespace Ordering.API.Application.Behaviors;
 
-// Pipeline MediatR de validation (point 6) : exécute tous les validateurs FluentValidation
-// enregistrés pour la requête avant le handler. En cas d'échec, lève une ValidationException
-// (traduite en réponse 400 par le middleware de gestion des exceptions de validation).
+// PIPELINE BEHAVIOR MediatR (IPipelineBehavior). Un « behavior » est un intercepteur qui
+// entoure CHAQUE handler — l'équivalent d'un middleware ASP.NET, mais pour les requêtes
+// MediatR. MediatR les enchaîne autour du handler : chacun peut agir avant/après en
+// appelant `next()`. C'est l'endroit idéal pour des préoccupations transverses (validation,
+// logs, transactions...) sans polluer les handlers.
+//
+// Ce behavior-ci exécute tous les validateurs FluentValidation enregistrés pour la requête
+// AVANT d'appeler le handler. Si un validateur échoue, il lève une ValidationException et
+// `next()` n'est jamais appelé -> le handler (et donc le domaine) n'est pas touché.
+// L'exception est ensuite traduite en réponse HTTP 400 par un middleware dans Program.cs.
+// Enregistré ouvert (typeof(ValidationBehavior<,>)) dans Program.cs, il s'applique à toutes
+// les commandes/requêtes.
 public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {

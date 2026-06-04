@@ -1,9 +1,22 @@
 namespace Basket.API.Models;
 
-// Panier d'un acheteur. C'est l'unité stockée telle quelle dans Redis :
-// l'objet entier est sérialisé en JSON sous une clé = BuyerId (cf. RedisBasketRepository).
-// Basket.API ne possède pas de base relationnelle ; le panier est une donnée
-// volatile/temporaire, idéale pour un cache clé-valeur comme Redis.
+// =============================================================================
+// FICHIER : CustomerBasket.cs
+// RÔLE    : le modèle de données central du service : le panier complet d'un acheteur.
+// CONCEPT : AGRÉGAT DE CACHE (clé-valeur) plutôt que modèle relationnel.
+//
+//   C'est l'UNITÉ stockée telle quelle dans Redis : l'objet entier est sérialisé
+//   en JSON sous une clé = BuyerId (cf. RedisBasketRepository). Basket.API ne
+//   possède pas de base relationnelle. Un panier est une donnée volatile, très
+//   sollicitée, sans besoin de requêtes complexes -> un "cache clé-valeur" comme
+//   Redis (base en mémoire, clé → valeur) est idéal : rapide et avec expiration
+//   automatique. À comparer avec Ordering.API qui, lui, utilise Postgres car une
+//   commande est une donnée durable et transactionnelle.
+//
+// À LIRE :
+//   - AVANT : BasketItem.cs (les lignes que ce panier contient).
+//   - APRÈS : Repositories/RedisBasketRepository.cs (comment il est persisté).
+// =============================================================================
 public class CustomerBasket
 {
     // Identifiant de l'acheteur = clé Redis. Côté API il est TOUJOURS dérivé du

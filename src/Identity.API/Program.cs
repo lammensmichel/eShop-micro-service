@@ -5,6 +5,28 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Identity.API.Services;
 
+// ============================================================================
+// FICHIER : Program.cs  —  DÉMARRAGE et CÂBLAGE d'Identity.API.
+//
+// RÔLE : assembler les DEUX couches qui font ce service :
+//   1) ASP.NET Core Identity   -> gestion des COMPTES (utilisateurs, mots de
+//      passe hachés, rôles), persistée via EF Core (ApplicationDbContext).
+//   2) Duende IdentityServer   -> couche OIDC/OAuth 2.0 qui ÉMET les jetons.
+//      Elle s'APPUIE sur la couche Identity ci-dessus pour authentifier
+//      réellement l'utilisateur, et sur Config.cs pour savoir qui peut quoi.
+//   En clair : Identity sait « ce mot de passe est-il bon ? » ; IdentityServer
+//   sait « voici le jeton OIDC à délivrer en conséquence ».
+//
+// POURQUOI l'ISSUER doit matcher l'AUTHORITY : le jeton émis ici inscrit comme
+//   "issuer" l'URL publique de CE service. Les APIs (Catalog/Basket/Ordering)
+//   sont configurées avec cette même URL comme "authority" et vérifient que
+//   l'issuer du jeton lui correspond. L'AppHost Aspire injecte l'URL via la
+//   variable d'env Identity__Url pour que les deux côtés voient EXACTEMENT la
+//   même valeur ; sinon, tout jeton serait rejeté à la validation.
+//
+// PLACE DANS L'ENSEMBLE : dernier fichier à lire pour Identity.API ; il relie
+//   Config.cs, le DbContext, le seed et CustomProfileService.
+// ============================================================================
 var builder = WebApplication.CreateBuilder(args);
 
 // Extensions partagées Aspire (télémétrie, health checks, service discovery).

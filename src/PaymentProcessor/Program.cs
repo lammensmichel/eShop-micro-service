@@ -1,20 +1,33 @@
 using eShop.IntegrationEvents.Messaging;
 using PaymentProcessor;
 
-// Service de fond pur (pas d'API HTTP) : un Host minimal qui héberge PaymentWorker.
-// Son rôle dans la chorégraphie saga est de simuler le paiement une fois le stock
-// confirmé, puis d'émettre l'événement de succès ou d'échec qui fait avancer (ou
-// compense) la commande côté Ordering.
+// ============================================================================
+// Program.cs — point d'entrée du worker PaymentProcessor.
+// ----------------------------------------------------------------------------
+// RÔLE : composer et démarrer un Host minimal qui héberge le PaymentWorker.
+// Service de fond PUR (pas d'API HTTP) : un BackgroundService qui consomme/publie
+// sur RabbitMQ. Structure identique à OrderProcessor/Program.cs (même socle).
+//
+// CONCEPT — Host.CreateApplicationBuilder (et non WebApplication.CreateBuilder) :
+// pas de pipeline HTTP ici, juste l'injection de dépendances, la configuration et
+// la journalisation nécessaires à un worker.
+//
+// PLACE DANS LA SAGA : simule le paiement une fois le stock confirmé, puis émet
+// l'événement de succès ou d'échec qui fait AVANCER (succès) ou COMPENSER (échec ->
+// annulation) la commande côté Ordering.
 var builder = Host.CreateApplicationBuilder(args);
 
-// Socle partagé (OpenTelemetry, health checks, service discovery), comme les API.
+// Socle transverse partagé par tous les services (voir eShop.ServiceDefaults) :
+// OpenTelemetry, health checks, service discovery, résilience HTTP.
 builder.AddServiceDefaults();
 
-// Bus d'événements RabbitMQ partagé. La chaîne de connexion "rabbitmq" est injectée
-// par Aspire (WithReference) — câblage AppHost prévu à l'étape 3.
+// Enregistre le bus RabbitMQ (IEventBus) dans la DI. La chaîne de connexion
+// "rabbitmq" est injectée par Aspire via WithReference(rabbitmq) — aucune URL en dur.
 builder.Services.AddRabbitMQEventBus(builder.Configuration.GetConnectionString("rabbitmq")!);
 
+// Enregistre le worker comme service hébergé (ExecuteAsync au démarrage, StopAsync à l'arrêt).
 builder.Services.AddHostedService<PaymentWorker>();
 
+// Construit l'hôte et bloque sur sa boucle de vie jusqu'à l'arrêt.
 var host = builder.Build();
 host.Run();

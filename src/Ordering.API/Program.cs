@@ -12,14 +12,31 @@ using Ordering.API.Infrastructure.Outbox;
 using Ordering.API.Infrastructure.Repositories;
 using eShop.IntegrationEvents.Messaging;
 
+// COMPOSITION ROOT du service : c'est ici qu'on CÂBLE tout. Deux phases :
+//   A) configuration des services dans le conteneur d'injection de dépendances (builder.Services) ;
+//   B) construction de l'app puis assemblage du pipeline HTTP (app.Use..., app.Map...).
+// C'est le bon fichier à lire pour comprendre quels composants existent et comment ils se
+// relient ; c'est aussi le seul endroit où l'on déclare explicitement les implémentations
+// concrètes (repository, services), respectant l'inversion de dépendance du reste du code.
+//
+// Bon à savoir sur l'auto-enregistrement MediatR : commandes, requêtes, leurs handlers et
+// les handlers de domain events sont découverts automatiquement par scan d'assembly (voir
+// AddMediatR plus bas). Ajouter un nouveau handler dans cet assembly suffit ; en revanche
+// les repositories et les services d'infrastructure doivent être enregistrés à la main ici.
+
 var builder = WebApplication.CreateBuilder(args);
 
+// ServiceDefaults (projet partagé) : OpenTelemetry, health checks de base, service discovery.
+// AddDefaultAuthentication : valide les jetons JWT émis par Identity.API.
+// AddNpgsqlDbContext : enregistre OrderingDbContext sur Postgres, AVEC POOLING -> d'où le
+// constructeur unique du DbContext et l'injection de IMediator par propriété (voir OrderingDbContext).
 builder.AddServiceDefaults();
 builder.AddDefaultAuthentication();
 builder.AddNpgsqlDbContext<OrderingDbContext>("orderingdb");
 
-// CORS (point 7) : politique restreinte à l'origine du front lue depuis la configuration
-// (clé "Cors:AllowedOrigins"), avec un repli dev raisonnable.
+// CORS : autorise le front (origine distincte) à appeler cette API depuis le navigateur.
+// Politique restreinte aux origines lues en configuration (clé "Cors:AllowedOrigins"),
+// avec un repli dev raisonnable.
 const string CorsPolicy = "OrderingCors";
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
 if (allowedOrigins is null || allowedOrigins.Length == 0)
@@ -38,15 +55,20 @@ builder.Services.AddCors(options =>
               .AllowCredentials());
 });
 
+// MediatR : scanne l'assembly et enregistre AUTOMATIQUEMENT tous les handlers de commandes,
+// de requêtes et de domain events. C'est le bus interne (in-process) du CQRS.
 builder.Services.AddMediatR(cfg =>
     cfg.RegisterServicesFromAssembly(typeof(CreateOrderCommand).Assembly));
 
-// Validation (point 6) : enregistrement des validateurs FluentValidation
-// et du pipeline MediatR de validation.
+// Validation : on enregistre les validateurs FluentValidation (scan d'assembly) ET le
+// ValidationBehavior, branché en pipeline OUVERT (IPipelineBehavior<,>) -> il s'exécute
+// avant CHAQUE handler MediatR. Voir Application/Behaviors/ValidationBehavior.cs.
 builder.Services.AddValidatorsFromAssembly(typeof(CreateOrderCommand).Assembly);
 builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
+// Repository d'agrégat (enregistrement EXPLICITE, contrairement aux handlers MediatR).
 builder.Services.AddScoped<IRepository<Order>, OrderRepository>();
+// Consumer RabbitMQ : background service, point d'entrée asynchrone (réception des events).
 builder.Services.AddHostedService<RabbitMQConsumer>();
 
 // Pattern Outbox : bus partagé RabbitMQ + service du journal d'événements d'intégration
@@ -55,8 +77,9 @@ builder.Services.AddRabbitMQEventBus(builder.Configuration.GetConnectionString("
 builder.Services.AddScoped<IIntegrationEventLogService, IntegrationEventLogService>();
 builder.Services.AddHostedService<IntegrationEventLogPublisher>();
 
-// Health checks (point 12) : le check de la base est déjà ajouté par AddNpgsqlDbContext ;
-// on complète avec un check RabbitMQ.
+// Health checks : sondes de disponibilité exposées via MapDefaultEndpoints (ServiceDefaults)
+// et utilisées par Aspire. Le check de la base est déjà ajouté par AddNpgsqlDbContext ; on
+// complète avec un check RabbitMQ (tag "ready" = readiness).
 builder.Services.AddHealthChecks()
     .AddCheck<RabbitMQHealthCheck>("rabbitmq", tags: ["ready"]);
 
@@ -67,7 +90,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapDefaultEndpoints();
 
-// Traduit les échecs de validation FluentValidation en réponse 400 (point 6).
+// Middleware qui rattrape la ValidationException levée par ValidationBehavior et la traduit
+// en réponse HTTP 400 (problem details), avec les messages groupés par champ.
 app.Use(async (context, next) =>
 {
     try
@@ -84,6 +108,8 @@ app.Use(async (context, next) =>
     }
 });
 
+// Au démarrage, on applique les migrations EF Core en attente (crée/maj le schéma).
+// Pratique en dev/démo ; en production on préférerait souvent un step de migration dédié.
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<OrderingDbContext>();

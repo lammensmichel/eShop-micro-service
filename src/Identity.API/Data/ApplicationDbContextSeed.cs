@@ -3,9 +3,30 @@ using Microsoft.AspNetCore.Identity;
 
 namespace Identity.API.Data;
 
-// Seed des données de démo d'Identity : les deux rôles et les utilisateurs alice/bob.
-// On passe par UserManager / RoleManager (et non par le DbContext brut) afin de
-// bénéficier du hachage des mots de passe, de la normalisation des noms, etc.
+// ============================================================================
+// FICHIER : ApplicationDbContextSeed.cs  —  PEUPLEMENT initial d'Identity.
+//
+// RÔLE : créer au premier démarrage les deux rôles (Admin, Customer) et les deux
+//   utilisateurs de démo (alice, bob), pour pouvoir se connecter immédiatement.
+//
+// CONCEPT — pourquoi UserManager / RoleManager et PAS le DbContext brut ?
+//   UserManager<T> et RoleManager<T> sont les services « métier » d'ASP.NET Core
+//   Identity. Insérer un utilisateur directement via le DbContext stockerait le
+//   mot de passe tel quel et oublierait des règles importantes. En passant par
+//   UserManager.CreateAsync(user, password), on bénéficie du HACHAGE du mot de
+//   passe (transformation à sens unique : la base ne contient JAMAIS le mot de
+//   passe en clair), de la normalisation des noms/emails, des validations, etc.
+//
+// IDEMPOTENCE : comme tout seed (cf. Catalog), ce code tourne à chaque démarrage ;
+//   les gardes « si le rôle/l'utilisateur existe déjà, ne pas recréer » évitent
+//   les doublons. (Voir CatalogContextSeed.cs pour la définition d'idempotence.)
+//
+// LIEN avec l'autorisation : les rôles attribués ici deviendront des claims "role"
+//   dans le jeton, injectés par CustomProfileService.cs ; c'est ce qui décide qui
+//   passe [Authorize(Roles = "Admin")] côté Catalog.API.
+//
+// À LIRE après ApplicationDbContext.cs, avant CustomProfileService.cs.
+// ============================================================================
 public static class ApplicationDbContextSeed
 {
     public static async Task SeedAsync(
