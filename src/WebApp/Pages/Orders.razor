@@ -7,9 +7,21 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject BuyerIdProvider BuyerIdProvider
 
-<div class="page-header">
+<div class="page-header" style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
     <h1>📋 Mes Commandes</h1>
+    <button class="btn btn-outline btn-sm" @onclick="RefreshAsync" disabled="@_loading">
+        @(_loading ? "⏳ Chargement…" : "🔄 Rafraîchir")
+    </button>
 </div>
+
+@* Le checkout est asynchrone (panier → événement RabbitMQ → création de la commande).
+   Une commande tout juste passée apparaît donc avec un léger délai : la page se
+   rafraîchit automatiquement quelques secondes après l'ouverture, et le bouton
+   ci-dessus permet de relancer la lecture à tout moment. *@
+@if (_orders is { Count: 0 } && _autoRefreshing)
+{
+    <div class="alert alert-info">⏳ Votre commande vient peut-être d'être validée — actualisation en cours…</div>
+}
 
 @if (_error is not null)
 {
@@ -59,10 +71,25 @@ else
 @code {
     private List<OrderDto>? _orders; // null = chargement ; vide = aucune commande
     private string? _error;
+    private bool _loading;        // un appel de lecture est en cours (désactive le bouton)
+    private bool _autoRefreshing; // un cycle d'auto-rafraîchissement est en cours
 
-    // Charge les commandes de l'utilisateur courant (filtrées par BuyerId côté API).
+    // Au chargement : on lit les commandes, puis on lance un petit cycle d'auto-
+    // rafraîchissement. Pourquoi ? Le checkout est ASYNCHRONE : valider le panier publie
+    // un événement RabbitMQ, et la commande n'est créée que lorsque Ordering.API l'a
+    // consommé (un court instant plus tard). Sans cela, l'utilisateur qui arrive ici juste
+    // après le checkout verrait « Aucune commande » à tort.
     protected override async Task OnInitializedAsync()
     {
+        await LoadOrdersAsync();
+        await AutoRefreshUntilOrdersAppearAsync();
+    }
+
+    // Lecture des commandes de l'utilisateur courant (filtrées par BuyerId côté API).
+    private async Task LoadOrdersAsync()
+    {
+        _loading = true;
+        _error = null;
         try
         {
             var buyerId = await BuyerIdProvider.GetBuyerIdAsync();
@@ -78,6 +105,28 @@ else
         {
             _error = ex.Message;
         }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // Bouton « Rafraîchir » : relit la liste à la demande.
+    private Task RefreshAsync() => LoadOrdersAsync();
+
+    // Rattrape une commande créée de façon asynchrone : tant que la liste est vide, on
+    // relit quelques fois à intervalle court, puis on s'arrête (pour ne pas interroger
+    // l'API indéfiniment). Un vrai « temps réel » utiliserait plutôt SignalR/WebSocket.
+    private async Task AutoRefreshUntilOrdersAppearAsync()
+    {
+        _autoRefreshing = true;
+        for (var attempt = 0; attempt < 5 && _orders is { Count: 0 } && _error is null; attempt++)
+        {
+            await Task.Delay(2500);
+            await LoadOrdersAsync();
+            StateHasChanged();
+        }
+        _autoRefreshing = false;
     }
 
     // Associe chaque statut de commande (renvoyé en minuscules par Ordering.API) à
