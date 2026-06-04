@@ -32,10 +32,18 @@ public class OrderStockConfirmedDomainEventHandler : INotificationHandler<OrderS
             notification.Order.Id,
             notification.Order.BuyerId);
 
+        // On ENRICHIT l'event sortant avec le montant à débiter (= total de la commande) et
+        // le moyen de paiement conservé sur l'Order : c'est le PaymentProcessor qui réalise
+        // la transaction, il lui faut donc de quoi débiter. ⚠️ Le PAN transite ici en clair
+        // UNIQUEMENT par simulation pédagogique (cf. PaymentMethod.cs / contrat PCI-DSS).
         var integrationEvent = new OrderStockConfirmedIntegrationEvent
         {
             OrderId = notification.Order.Id,
-            BuyerId = notification.Order.BuyerId
+            BuyerId = notification.Order.BuyerId,
+            Amount = notification.Order.TotalPrice,
+            CardNumber = notification.Order.PaymentMethod.CardNumber,
+            CardHolderName = notification.Order.PaymentMethod.CardHolderName,
+            CardExpiration = notification.Order.PaymentMethod.CardExpiration
         };
 
         await _eventLogService.SaveEventAsync(integrationEvent, OrderStockConfirmedRoutingKey);

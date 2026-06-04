@@ -271,7 +271,7 @@ public class RabbitMQConsumer : BackgroundService
                 var evt = JsonSerializer.Deserialize<OrderPaymentSucceededIntegrationEvent>(json)
                     ?? throw new InvalidOperationException("OrderPaymentSucceededIntegrationEvent null");
                 return (evt.Id, (db, mediator) =>
-                    mediator.Send(new ConfirmOrderPaymentCommand(evt.OrderId, evt.BuyerId)));
+                    mediator.Send(new ConfirmOrderPaymentCommand(evt.OrderId, evt.BuyerId, evt.TransactionId)));
             }
             case PaymentFailedRoutingKey:
             {
@@ -295,6 +295,11 @@ public class RabbitMQConsumer : BackgroundService
             Street = checkoutEvent.Street,
             Country = checkoutEvent.Country,
             ZipCode = checkoutEvent.ZipCode,
+            // Moyen de paiement recopié du checkout (cf. ⚠️ PCI-DSS dans PaymentMethod.cs) :
+            // Ordering le conserve sur la commande pour le rachemine au PaymentProcessor.
+            CardNumber = checkoutEvent.CardNumber,
+            CardHolderName = checkoutEvent.CardHolderName,
+            CardExpiration = checkoutEvent.CardExpiration,
             Items = checkoutEvent.Items.Select(i => new CreateOrderCommandItem
             {
                 ProductId = i.ProductId,

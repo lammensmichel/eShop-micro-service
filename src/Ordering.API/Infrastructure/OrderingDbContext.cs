@@ -37,6 +37,15 @@ public class OrderingDbContext : DbContext
             // propre, ses colonnes sont aplaties dans la table Orders. Son cycle de vie est
             // entièrement lié à l'Order qui le contient.
             order.OwnsOne(o => o.Address);
+            // PaymentMethod est lui aussi un VALUE OBJECT « possédé » (owned type), aplati
+            // dans la table Orders (colonnes PaymentMethod_*). Comme Address, ses colonnes
+            // sont non nullables : toute commande porte forcément un moyen de paiement.
+            // ⚠️ PCI-DSS : on stocke ici le PAN en clair UNIQUEMENT pour la simulation
+            // pédagogique (cf. PaymentMethod.cs). En production : tokenisation, jamais le PAN.
+            order.OwnsOne(o => o.PaymentMethod);
+            // Référence de transaction : colonne SIMPLE et NULLABLE (renseignée seulement
+            // une fois le paiement confirmé).
+            order.Property(o => o.PaymentTransactionId);
             // OrderStatus est une enumeration class : on persiste son Id (entier stable) et
             // on re-mappe l'entier vers le SINGLETON correspondant à la lecture, pour que
             // l'égalité par référence/valeur reste cohérente côté domaine.

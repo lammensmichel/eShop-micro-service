@@ -19,4 +19,9 @@ public record OrderPaymentSucceededIntegrationEvent : IntegrationEvent
 {
     public required int OrderId { get; init; }
     public required string BuyerId { get; init; }
+
+    // Référence de la transaction renvoyée par la passerelle de paiement (le « reçu »).
+    // Conservée sur la commande côté Ordering (traçabilité). En simulation, c'est un
+    // identifiant factice ; avec un vrai prestataire, ce serait son id de transaction.
+    public required string TransactionId { get; init; }
 }

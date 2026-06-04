@@ -159,7 +159,7 @@ public class ConfirmOrderPaymentCommandHandler : IRequestHandler<ConfirmOrderPay
         // les deux conditions sont fausses (no-op). Un rejeu avec un nouvel EventId est ainsi
         // absorbé au lieu de lever et de finir en DLQ.
         if (order.Status == OrderStatus.StockConfirmed)
-            order.SetPaid();
+            order.SetPaid(request.TransactionId);
         if (order.Status == OrderStatus.Paid)
             order.Ship();
         _orderRepository.Update(order);

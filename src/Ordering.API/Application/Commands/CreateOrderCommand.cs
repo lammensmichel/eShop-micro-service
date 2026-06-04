@@ -14,6 +14,11 @@ public record CreateOrderCommand : IRequest<int>
     public required string Street { get; init; }
     public required string Country { get; init; }
     public required string ZipCode { get; init; }
+    // Moyen de paiement (simulation, cf. ⚠️ PCI-DSS dans PaymentMethod.cs). Données brutes
+    // recopiées depuis le BasketCheckoutEvent ; transformées en PaymentMethod par le handler.
+    public required string CardNumber { get; init; }
+    public required string CardHolderName { get; init; }
+    public DateTime CardExpiration { get; init; }
     public List<CreateOrderCommandItem> Items { get; init; } = [];
 }
 

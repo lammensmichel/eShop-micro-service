@@ -29,8 +29,9 @@ public record CancelOrderCommand(int OrderId, string BuyerId) : IRequest<Unit>;
 public record ConfirmGracePeriodCommand(int OrderId, string BuyerId) : IRequest<Unit>;
 
 // Déclenchée à la réception de OrderPaymentSucceededIntegrationEvent : passe la commande
-// en Paid puis l'expédie (Ship).
-public record ConfirmOrderPaymentCommand(int OrderId, string BuyerId) : IRequest<Unit>;
+// en Paid puis l'expédie (Ship). TransactionId = référence du paiement renvoyée par la
+// passerelle, conservée sur la commande pour la traçabilité.
+public record ConfirmOrderPaymentCommand(int OrderId, string BuyerId, string TransactionId) : IRequest<Unit>;
 
 // Déclenchée à la réception de OrderPaymentFailedIntegrationEvent : annule la commande.
 public record CancelOrderPaymentCommand(int OrderId, string BuyerId) : IRequest<Unit>;

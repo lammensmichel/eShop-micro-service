@@ -8,6 +8,11 @@ namespace Ordering.UnitTests;
 // On ne teste que le domaine pur (pas d'EF, pas de MediatR).
 public class OrderAggregateTests
 {
+    // Fabrique un moyen de paiement d'exemple (le constructeur d'Order l'exige désormais).
+    // ⚠️ Données carte factices : simulation pédagogique uniquement (cf. PaymentMethod.cs).
+    private static PaymentMethod CreatePaymentMethod() =>
+        new PaymentMethod("4111111111111111", "John Doe", new DateTime(2030, 12, 31));
+
     // Fabrique un Order valide pour les scénarios de transition.
     private static Order CreateValidOrder()
     {
@@ -16,7 +21,7 @@ public class OrderAggregateTests
         {
             new OrderItem(productId: 1, productName: "Produit A", unitPrice: 10m, units: 2)
         };
-        return new Order("buyer-123", address, items);
+        return new Order("buyer-123", address, items, CreatePaymentMethod());
     }
 
     // --- Constructeur : invariants ---
@@ -30,7 +35,7 @@ public class OrderAggregateTests
             new OrderItem(1, "Produit A", 10m, 1)
         };
 
-        Assert.Throws<ArgumentException>(() => new Order(string.Empty, address, items));
+        Assert.Throws<ArgumentException>(() => new Order(string.Empty, address, items, CreatePaymentMethod()));
     }
 
     [Fact]
@@ -39,7 +44,7 @@ public class OrderAggregateTests
         var address = new Address("rue", "ville", "pays", "0000");
         var items = new List<OrderItem>();
 
-        Assert.Throws<ArgumentException>(() => new Order("buyer-123", address, items));
+        Assert.Throws<ArgumentException>(() => new Order("buyer-123", address, items, CreatePaymentMethod()));
     }
 
     [Fact]
@@ -58,6 +63,27 @@ public class OrderAggregateTests
         Assert.Single(order.DomainEvents);
         var domainEvent = Assert.IsType<OrderPlacedDomainEvent>(order.DomainEvents.First());
         Assert.Same(order, domainEvent.Order);
+    }
+
+    [Fact]
+    public void Constructeur_Conserve_Le_PaymentMethod()
+    {
+        var address = new Address("rue", "ville", "pays", "0000");
+        var items = new List<OrderItem> { new OrderItem(1, "Produit A", 10m, 1) };
+        var paymentMethod = new PaymentMethod("4111111111111111", "John Doe", new DateTime(2030, 12, 31));
+
+        var order = new Order("buyer-123", address, items, paymentMethod);
+
+        Assert.Equal(paymentMethod, order.PaymentMethod);
+    }
+
+    [Fact]
+    public void Constructeur_Leve_Si_PaymentMethod_Null()
+    {
+        var address = new Address("rue", "ville", "pays", "0000");
+        var items = new List<OrderItem> { new OrderItem(1, "Produit A", 10m, 1) };
+
+        Assert.Throws<ArgumentNullException>(() => new Order("buyer-123", address, items, null!));
     }
 
     // --- Transitions d'état ---
@@ -201,6 +227,19 @@ public class OrderAggregateTests
         Assert.Contains(order.DomainEvents, e => e is OrderPaidDomainEvent);
     }
 
+    [Fact]
+    public void SetPaid_Enregistre_Le_PaymentTransactionId()
+    {
+        var order = CreateValidOrder();
+        order.SetAwaitingValidation();
+        order.SetStockConfirmed();
+
+        order.SetPaid("txn-abc-123");
+
+        Assert.Equal("txn-abc-123", order.PaymentTransactionId);
+        Assert.Equal(OrderStatus.Paid, order.Status);
+    }
+
     // --- TotalPrice ---
 
     [Fact]
@@ -212,7 +251,7 @@ public class OrderAggregateTests
             new OrderItem(1, "Produit A", unitPrice: 10m, units: 2), // 20
             new OrderItem(2, "Produit B", unitPrice: 5.5m, units: 3)  // 16.5
         };
-        var order = new Order("buyer-123", address, items);
+        var order = new Order("buyer-123", address, items, CreatePaymentMethod());
 
         Assert.Equal(36.5m, order.TotalPrice);
     }

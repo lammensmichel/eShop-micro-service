@@ -1,5 +1,6 @@
 using eShop.IntegrationEvents.Messaging;
 using PaymentProcessor;
+using PaymentProcessor.Payment;
 
 // ============================================================================
 // Program.cs — point d'entrée du worker PaymentProcessor.
@@ -24,6 +25,13 @@ builder.AddServiceDefaults();
 // Enregistre le bus RabbitMQ (IEventBus) dans la DI. La chaîne de connexion
 // "rabbitmq" est injectée par Aspire via WithReference(rabbitmq) — aucune URL en dur.
 builder.Services.AddRabbitMQEventBus(builder.Configuration.GetConnectionString("rabbitmq")!);
+
+// Enregistre la PASSERELLE de paiement (point d'extension). Par défaut, la SIMULATION.
+// Singleton : sans état mutable, une seule instance suffit pour tout le worker.
+// Pour un VRAI paiement, remplacer par :
+//   AddSingleton<IPaymentGateway, StripePaymentGateway>()  (classe à créer)
+// — le PaymentWorker, qui dépend de l'interface IPaymentGateway, n'a pas à changer.
+builder.Services.AddSingleton<IPaymentGateway, SimulatedPaymentGateway>();
 
 // Enregistre le worker comme service hébergé (ExecuteAsync au démarrage, StopAsync à l'arrêt).
 builder.Services.AddHostedService<PaymentWorker>();

@@ -29,9 +29,15 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, int
             new OrderItem(i.ProductId, i.ProductName, i.UnitPrice, i.Quantity)
         ).ToList();
 
+        // Moyen de paiement conservé sur la commande (cf. ⚠️ PCI-DSS dans PaymentMethod.cs).
+        var paymentMethod = new PaymentMethod(
+            request.CardNumber,
+            request.CardHolderName,
+            request.CardExpiration);
+
         // C'est le constructeur de l'agrégat qui applique les invariants ET lève
         // OrderPlacedDomainEvent : la couche application n'a aucune règle à dupliquer.
-        var order = new Order(request.BuyerId, address, items);
+        var order = new Order(request.BuyerId, address, items, paymentMethod);
 
         _orderRepository.Add(order);
 

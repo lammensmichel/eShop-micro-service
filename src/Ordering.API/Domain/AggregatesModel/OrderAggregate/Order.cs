@@ -22,6 +22,14 @@ public class Order : Entity, IAggregateRoot
     public Address Address { get; private set; }
     public OrderStatus Status { get; private set; }
 
+    // Moyen de paiement conservé sur la commande (value object owned, cf. ⚠️ PCI-DSS dans
+    // PaymentMethod.cs). Il est rachemine au PaymentProcessor au moment du stock-confirmed.
+    public PaymentMethod PaymentMethod { get; private set; }
+
+    // Référence de la transaction renvoyée par la passerelle de paiement (traçabilité).
+    // Nullable : renseignée seulement une fois le paiement confirmé (SetPaid).
+    public string? PaymentTransactionId { get; private set; }
+
     // Collection enfant ENCAPSULÉE : champ privé modifiable, exposé en lecture seule.
     // Impossible d'ajouter/retirer un article hors de l'agrégat -> la cohérence (et le
     // total) reste sous le contrôle d'Order.
@@ -39,20 +47,26 @@ public class Order : Entity, IAggregateRoot
     {
         BuyerId = string.Empty;
         Address = null!;
+        PaymentMethod = null!;
         Status = OrderStatus.Submitted;
     }
 
     // Constructeur MÉTIER : seule façon de créer une commande valide.
-    public Order(string buyerId, Address address, List<OrderItem> items)
+    public Order(string buyerId, Address address, List<OrderItem> items, PaymentMethod paymentMethod)
     {
         // Invariants vérifiés DÈS la création : un Order naît forcément cohérent.
         if (string.IsNullOrEmpty(buyerId))
             throw new ArgumentException("BuyerId cannot be empty", nameof(buyerId));
         if (items.Count == 0)
             throw new ArgumentException("Order must have at least one item", nameof(items));
+        // Invariant : une commande conserve toujours le moyen de paiement choisi au checkout
+        // (on en aura besoin pour débiter au moment du stock-confirmed).
+        if (paymentMethod is null)
+            throw new ArgumentNullException(nameof(paymentMethod));
 
         BuyerId = buyerId;
         Address = address;
+        PaymentMethod = paymentMethod;
         OrderDate = DateTime.UtcNow;
         Status = OrderStatus.Submitted; // état initial de la machine à états
         _orderItems.AddRange(items);
@@ -78,12 +92,15 @@ public class Order : Entity, IAggregateRoot
         AddDomainEvent(new OrderStockConfirmedDomainEvent(this));
     }
 
-    // StockConfirmed -> Paid.
-    public void SetPaid()
+    // StockConfirmed -> Paid. transactionId est OPTIONNEL : c'est la référence du paiement
+    // renvoyée par la passerelle (le « reçu »), qu'on conserve pour la traçabilité. Optionnel
+    // pour ne pas casser les appels existants ; renseigné depuis l'event « paiement réussi ».
+    public void SetPaid(string? transactionId = null)
     {
         if (Status != OrderStatus.StockConfirmed)
             throw new InvalidOperationException("Order stock must be confirmed first");
 
+        PaymentTransactionId = transactionId;
         Status = OrderStatus.Paid;
 
         AddDomainEvent(new OrderPaidDomainEvent(this));

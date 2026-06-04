@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using eShop.IntegrationEvents.Events;
 using eShop.IntegrationEvents.Messaging;
+using PaymentProcessor.Payment;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
@@ -10,12 +11,15 @@ namespace PaymentProcessor;
 // ============================================================================
 // PaymentWorker — l'étape « paiement » de la saga de commande.
 // ----------------------------------------------------------------------------
-// RÔLE : une fois le stock confirmé par Ordering, ce worker simule le paiement
-// et émet le résultat, qui fera AVANCER ou COMPENSER la commande. Concrètement :
+// RÔLE : une fois le stock confirmé par Ordering, ce worker fait DÉBITER le
+// paiement par une PASSERELLE (IPaymentGateway) et émet le résultat, qui fera
+// AVANCER ou COMPENSER la commande. Concrètement :
 //   1. CONSOMME  OrderStockConfirmedIntegrationEvent
 //                (routing key "ordering-order-stock-confirmed") ;
-//   2. SIMULE    un paiement (succès par défaut, échec si Payment:AlwaysFail=true) ;
-//   3. PUBLIE    soit OrderPaymentSucceededIntegrationEvent (routing "payment-succeeded"),
+//   2. CHARGE    le paiement via _gateway.ChargeAsync(PaymentRequest) — le worker
+//                ne sait PAS si c'est une simulation ou un vrai prestataire ;
+//   3. PUBLIE    soit OrderPaymentSucceededIntegrationEvent (routing "payment-succeeded",
+//                avec le TransactionId renvoyé par la passerelle),
 //                soit OrderPaymentFailedIntegrationEvent    (routing "payment-failed",
 //                                                             avec un Reason explicatif).
 //
@@ -27,8 +31,17 @@ namespace PaymentProcessor;
 //   commande (échec). Le worker n'a aucune connaissance de cette suite — il se
 //   contente d'émettre le fait « paiement réussi/échoué » (découplage par événements).
 //
-// L'option Payment:AlwaysFail permet de tester FACILEMENT le chemin d'échec/
-// compensation de la saga sans vrai prestataire de paiement.
+// ABSTRACTION DU PAIEMENT — IPaymentGateway.
+//   Le worker délègue tout le « comment on paie » à une passerelle injectée. Par
+//   défaut c'est SimulatedPaymentGateway (succès si le moyen de paiement est
+//   valide, échec sinon, et échec forcé si Payment:AlwaysFail=true — utile pour
+//   tester la compensation). Pour un vrai paiement, on n'échange QUE l'implémentation
+//   enregistrée dans Program.cs : ce worker reste inchangé.
+//
+// ⚠️ PCI-DSS : l'événement consommé transporte ici un numéro de carte EN CLAIR,
+//   UNIQUEMENT pour la simulation pédagogique. En PRODUCTION, ces données carte ne
+//   doivent JAMAIS transiter en clair (ni sur le bus, ni dans nos logs) : on
+//   utiliserait un JETON (tokenisation chez le prestataire au checkout).
 //
 // PLACE DANS L'ENSEMBLE :
 //   Ordering -- ordering-order-stock-confirmed --> [CE WORKER] -- payment-succeeded --> Ordering
@@ -41,9 +54,9 @@ namespace PaymentProcessor;
 public class PaymentWorker : BackgroundService
 {
     private readonly IEventBus _eventBus;
+    private readonly IPaymentGateway _gateway;
     private readonly ILogger<PaymentWorker> _logger;
     private readonly string _connectionString;
-    private readonly bool _alwaysFail;
     private IConnection? _connection;
     private IChannel? _channel;
 
@@ -60,21 +73,21 @@ public class PaymentWorker : BackgroundService
     private const string PaymentFailedRoutingKey = "payment-failed";
 
     // Dépendances injectées par le conteneur DI (configuré dans Program.cs) :
-    // IEventBus (publier le résultat), ILogger (journalisation -> OpenTelemetry),
-    // IConfiguration (chaîne de connexion + comportement de simulation).
+    // IEventBus (publier le résultat), IPaymentGateway (effectuer le débit),
+    // ILogger (journalisation -> OpenTelemetry), IConfiguration (chaîne de connexion).
+    // NOTE : le worker NE LIT PLUS Payment:AlwaysFail — c'est désormais la passerelle
+    // (SimulatedPaymentGateway) qui gère ce détail de simulation.
     public PaymentWorker(
         IEventBus eventBus,
+        IPaymentGateway gateway,
         ILogger<PaymentWorker> logger,
         IConfiguration configuration)
     {
         _eventBus = eventBus;
+        _gateway = gateway;
         _logger = logger;
         // Chaîne de connexion injectée par Aspire via WithReference(rabbitmq) — pas d'URL en dur.
         _connectionString = configuration.GetConnectionString("rabbitmq")!;
-
-        // Échec forcé du paiement si "Payment:AlwaysFail" = true (défaut : false -> succès).
-        // Sert à exercer le chemin de COMPENSATION de la saga (annulation de commande).
-        _alwaysFail = configuration.GetValue("Payment:AlwaysFail", false);
     }
 
     // Boucle de fond : connexion RabbitMQ + déclaration de la topologie + abonnement,
@@ -118,8 +131,8 @@ public class PaymentWorker : BackgroundService
             cancellationToken: stoppingToken);
 
         _logger.LogInformation(
-            "PaymentProcessor démarré : écoute '{RoutingKey}', AlwaysFail={AlwaysFail}",
-            StockConfirmedRoutingKey, _alwaysFail);
+            "PaymentProcessor démarré : écoute '{RoutingKey}', passerelle {Gateway}",
+            StockConfirmedRoutingKey, _gateway.GetType().Name);
 
         // On empêche ExecuteAsync de se terminer (sinon le worker s'arrêterait) :
         // attente « infinie » annulée par le stoppingToken au moment de l'arrêt.
@@ -148,44 +161,62 @@ public class PaymentWorker : BackgroundService
         }
 
         _logger.LogInformation(
-            "Stock confirmé pour la commande {OrderId} (event {EventId}) : simulation du paiement",
+            "Stock confirmé pour la commande {OrderId} (event {EventId}) : traitement du paiement",
             evt.OrderId, evt.Id);
 
         try
         {
-            // Simulation du paiement : succès par défaut, échec si Payment:AlwaysFail=true.
+            // On traduit l'événement reçu en PaymentRequest, puis on délègue le débit
+            // à la passerelle. Le worker IGNORE s'il s'agit d'une simulation ou d'un
+            // vrai prestataire : il ne voit que l'abstraction IPaymentGateway.
+            // ⚠️ PCI-DSS : on transmet ici un numéro de carte en clair UNIQUEMENT pour
+            // la simulation ; en prod ce serait un jeton (jamais le PAN brut, ni en log).
+            var request = new PaymentRequest(
+                OrderId: evt.OrderId,
+                BuyerId: evt.BuyerId,
+                Amount: evt.Amount,
+                CardNumber: evt.CardNumber,
+                CardHolderName: evt.CardHolderName,
+                CardExpiration: evt.CardExpiration);
+
+            // ea.CancellationToken : jeton fourni par le consumer RabbitMQ pour cette
+            // livraison (annulé à l'arrêt du worker), propagé à la passerelle.
+            var result = await _gateway.ChargeAsync(request, ea.CancellationToken);
+
             // Dans les deux branches, on PUBLIE d'abord le résultat, PUIS on acquitte
             // (ack après publication réussie -> garantie at-least-once, voir plus bas).
-            if (_alwaysFail)
-            {
-                var failed = new OrderPaymentFailedIntegrationEvent
-                {
-                    OrderId = evt.OrderId,
-                    BuyerId = evt.BuyerId,
-                    Reason = "Paiement refusé (simulation : Payment:AlwaysFail=true)"
-                };
-
-                await _eventBus.PublishAsync(failed, PaymentFailedRoutingKey);
-                await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
-
-                _logger.LogInformation(
-                    "Paiement ÉCHOUÉ pour la commande {OrderId} : '{RoutingKey}' publié",
-                    evt.OrderId, PaymentFailedRoutingKey);
-            }
-            else
+            if (result.Succeeded)
             {
                 var succeeded = new OrderPaymentSucceededIntegrationEvent
                 {
                     OrderId = evt.OrderId,
-                    BuyerId = evt.BuyerId
+                    BuyerId = evt.BuyerId,
+                    // TransactionId garanti non-null par PaymentResult.Success.
+                    TransactionId = result.TransactionId!
                 };
 
                 await _eventBus.PublishAsync(succeeded, PaymentSucceededRoutingKey);
                 await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
 
                 _logger.LogInformation(
-                    "Paiement RÉUSSI pour la commande {OrderId} : '{RoutingKey}' publié",
-                    evt.OrderId, PaymentSucceededRoutingKey);
+                    "Paiement RÉUSSI pour la commande {OrderId} (transaction {TransactionId}) : '{RoutingKey}' publié",
+                    evt.OrderId, succeeded.TransactionId, PaymentSucceededRoutingKey);
+            }
+            else
+            {
+                var failed = new OrderPaymentFailedIntegrationEvent
+                {
+                    OrderId = evt.OrderId,
+                    BuyerId = evt.BuyerId,
+                    Reason = result.FailureReason
+                };
+
+                await _eventBus.PublishAsync(failed, PaymentFailedRoutingKey);
+                await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
+
+                _logger.LogInformation(
+                    "Paiement ÉCHOUÉ pour la commande {OrderId} ({Reason}) : '{RoutingKey}' publié",
+                    evt.OrderId, failed.Reason, PaymentFailedRoutingKey);
             }
         }
         catch (Exception ex)
