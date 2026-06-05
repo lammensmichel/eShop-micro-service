@@ -1,0 +1,10 @@
+# Namespace racine de l'application eShop.
+# Tout (sauf le ClusterIssuer, cluster-scoped) est déployé ici.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eshop
+  labels:
+    # Labels imposés par le contrat (conventions générales).
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: eshop

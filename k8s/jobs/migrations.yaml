@@ -1,0 +1,175 @@
+# Jobs de migration de schéma — joués AVANT le rollout des apps (migrations
+# backward-compatibles -> zéro perte de données, zéro-interruption).
+# Chaque Job lance l'image du service avec l'argument --migrate : le code migre
+# la base puis s'arrête (code 0). restartPolicy: Never + backoffLimit: 2.
+#
+# TEMPLATE : les scripts (start-prod.sh / update-prod.sh) RECRÉENT ces Jobs en
+# suffixant le nom par le TAG (un Job est immuable, un nom unique par release)
+# puis font `kubectl wait --for=condition=complete`.
+---
+# Migration de catalogdb (Postgres).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-catalog
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: catalog-api
+spec:
+  # backoffLimit : 2 tentatives max avant de marquer le Job en échec.
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: catalog-api
+    spec:
+      # restartPolicy: Never : un échec recrée un nouveau pod (suivi par backoffLimit),
+      # on ne redémarre pas le conteneur en place.
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-creds
+      # securityContext non-root, cohérent avec les Deployments.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+      containers:
+        - name: migrate-catalog
+          image: ghcr.io/lammensmichel/catalog-api:__TAG__
+          args: ["--migrate"]
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: DOTNET_ENVIRONMENT
+              value: "Production"
+            # Chaîne de connexion injectée depuis le Secret eshop-connstrings.
+            - name: ConnectionStrings__catalogdb
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-connstrings
+                  key: ConnectionStrings__catalogdb
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Migration de orderingdb (Postgres).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-ordering
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: ordering-api
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: ordering-api
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+      containers:
+        - name: migrate-ordering
+          image: ghcr.io/lammensmichel/ordering-api:__TAG__
+          args: ["--migrate"]
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: DOTNET_ENVIRONMENT
+              value: "Production"
+            - name: ConnectionStrings__orderingdb
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-connstrings
+                  key: ConnectionStrings__orderingdb
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Migration de identitydb (Postgres) + seed optionnel des utilisateurs de démo.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-identity
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: identity-api
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: identity-api
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-creds
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+      containers:
+        - name: migrate-identity
+          image: ghcr.io/lammensmichel/identity-api:__TAG__
+          args: ["--migrate"]
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: DOTNET_ENVIRONMENT
+              value: "Production"
+            - name: ConnectionStrings__identitydb
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-connstrings
+                  key: ConnectionStrings__identitydb
+            # Seed des utilisateurs de démo (valeur non secrète) depuis eshop-config.
+            - name: Identity__SeedDemoUsers
+              valueFrom:
+                configMapKeyRef:
+                  name: eshop-config
+                  key: Identity__SeedDemoUsers
+            # Mot de passe de démo : secret, depuis eshop-secrets.
+            - name: Identity__DemoPassword
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-secrets
+                  key: identity-demo-password
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

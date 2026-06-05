@@ -1,0 +1,155 @@
+# catalog-api — API web du catalogue produits (Postgres catalogdb).
+# Déploiement zéro-interruption : maxUnavailable=0 (jamais moins de pods prêts
+# que demandé pendant un rollout), securityContext durci, PDB minAvailable=1.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-api
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: catalog-api
+spec:
+  # 2 réplicas pour les APIs (haute dispo + rolling update sans coupure).
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalog-api
+  # minReadySeconds : on attend 10s qu'un nouveau pod soit stable avant de le
+  # considérer disponible (évite de router du trafic vers un pod qui va crasher).
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # zéro-interruption : on ne tue jamais un pod avant qu'un neuf soit prêt.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: catalog-api
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+      # terminationGracePeriodSeconds : laisse 30s au pod pour finir ses requêtes
+      # en cours et se désinscrire proprement avant le SIGKILL (drain propre).
+      terminationGracePeriodSeconds: 30
+      # securityContext durci au niveau pod : on tourne en non-root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+      containers:
+        - name: catalog-api
+          image: ghcr.io/lammensmichel/catalog-api:__TAG__
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://+:8080"
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: DOTNET_ENVIRONMENT
+              value: "Production"
+            # Chaîne de connexion injectée depuis le Secret eshop-connstrings.
+            - name: ConnectionStrings__catalogdb
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-connstrings
+                  key: ConnectionStrings__catalogdb
+            # Origine CORS publique (valeur non secrète) depuis eshop-config.
+            - name: Cors__AllowedOrigins__0
+              valueFrom:
+                configMapKeyRef:
+                  name: eshop-config
+                  key: Cors__AllowedOrigins__0
+            - name: Identity__Url
+              valueFrom:
+                configMapKeyRef:
+                  name: eshop-config
+                  key: Identity__Url
+            - name: Identity__RequireHttpsMetadata
+              valueFrom:
+                configMapKeyRef:
+                  name: eshop-config
+                  key: Identity__RequireHttpsMetadata
+            # Les migrations sont jouées par un Job dédié, jamais au démarrage.
+            - name: RunMigrationsAtStartup
+              value: "false"
+          # securityContext durci au niveau conteneur.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # readinessProbe : retire le pod du Service tant que /health échoue
+          # (ne reçoit pas de trafic s'il n'est pas vraiment prêt).
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+          # livenessProbe : redémarre le pod si /alive échoue (deadlock, etc.).
+          livenessProbe:
+            httpGet:
+              path: /alive
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+          # startupProbe : tolère un démarrage lent (jusqu'à 30*5=150s) avant que
+          # liveness ne prenne le relais — évite des redémarrages en boucle au boot.
+          startupProbe:
+            httpGet:
+              path: /alive
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # readOnlyRootFilesystem=true : on monte un emptyDir inscriptible sur /tmp.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-api
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: catalog-api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: catalog-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+# PDB : garantit qu'au moins 1 pod reste disponible lors des opérations
+# volontaires (drain de nœud, maintenance) — pas de coupure de service.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: catalog-api
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: catalog-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalog-api

@@ -1,0 +1,18 @@
+# ConfigMap des valeurs NON secrètes, partagées par les apps.
+# Les placeholders __DOMAIN__ sont substitués par start-prod.sh (sed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eshop-config
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: eshop-config
+data:
+  # Identity : pas de seed des utilisateurs de démo en prod, HTTPS exigé.
+  Identity__SeedDemoUsers: "false"
+  Identity__RequireHttpsMetadata: "true"
+  # Valeurs dérivées du domaine, consommées en variables d'env par les apps.
+  Cors__AllowedOrigins__0: "https://app.__DOMAIN__"
+  Identity__Url: "https://id.__DOMAIN__"
+  Identity__WebAppUrl: "https://app.__DOMAIN__"

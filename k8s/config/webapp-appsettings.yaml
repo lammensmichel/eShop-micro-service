@@ -1,0 +1,14 @@
+# ConfigMap monté en /app/wwwroot/appsettings.json dans le pod webapp.
+# Fournit au client WASM les URLs publiques des backends (appelés par le navigateur).
+# Les placeholders __DOMAIN__ sont substitués par start-prod.sh (sed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webapp-appsettings
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: webapp
+data:
+  appsettings.json: |
+    {"Backend":{"CatalogApi":"https://app.__DOMAIN__","BasketApi":"https://app.__DOMAIN__","OrderingApi":"https://app.__DOMAIN__","IdentityAuthority":"https://id.__DOMAIN__"}}

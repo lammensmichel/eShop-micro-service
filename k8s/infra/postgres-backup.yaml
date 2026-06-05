@@ -1,0 +1,134 @@
+# =============================================================================
+# Sauvegarde PostgreSQL — CronJob nocturne
+# -----------------------------------------------------------------------------
+# Objectif "zéro perte de données" : en plus du PVC de Postgres (qui protège
+# du reschedule de pod), on garde des dumps logiques quotidiens sur un PVC
+# DÉDIÉ (postgres-backups). Chaque nuit on fait un pg_dump des 3 bases et on
+# purge les dumps de plus de 7 jours.
+#
+# RESTAURATION (documentée ici) :
+#   1) Récupérer un dump (port-forward + kubectl cp, ou pod debug montant le PVC) :
+#        kubectl -n eshop run pg-restore --rm -it --restart=Never \
+#          --image=postgres:17 --overrides='{...montage du PVC postgres-backups...}'
+#      ou plus simple, un pod éphémère qui monte le PVC :
+#        kubectl -n eshop exec -it <pod> -- ls /backups
+#   2) Restaurer une base (ex. catalogdb) — la base doit exister :
+#        psql -h postgres -U postgres -d catalogdb < /backups/<date>/catalogdb.sql
+#      (PGPASSWORD doit être positionné, cf. Secret eshop-secrets/postgres-password)
+#   Les dumps sont en SQL clair (pg_dump par défaut), donc restaurables avec
+#   un simple "psql < fichier.sql".
+# =============================================================================
+---
+# -----------------------------------------------------------------------------
+# PVC dédié aux sauvegardes (5Gi). Séparé du volume de données pour qu'une
+# corruption/perte du PVC de Postgres n'emporte pas aussi les backups.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backups
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: postgres-backup
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: postgres-backup
+spec:
+  # Tous les jours à 02h00 (heure du cluster) : faible trafic.
+  schedule: "0 2 * * *"
+  # On ne lance pas plusieurs sauvegardes en parallèle si l'une traîne.
+  concurrencyPolicy: Forbid
+  # Si le contrôleur a manqué l'heure (cluster down), tolérance de 1h.
+  startingDeadlineSeconds: 3600
+  # Historique conservé côté K8s pour inspecter les logs des derniers runs.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: postgres-backup
+    spec:
+      # Pas de relance infinie en cas d'échec d'un run.
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: eshop
+            app.kubernetes.io/name: postgres-backup
+        spec:
+          restartPolicy: Never
+          # pg_dump tourne très bien en non-root ; uid 999 = "postgres" dans
+          # l'image officielle, fsGroup pour pouvoir écrire sur le PVC backups.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+          containers:
+            - name: pg-dump
+              # Même image que le serveur : contient pg_dump compatible v17.
+              image: postgres:17
+              env:
+                # pg_dump lit le mot de passe via PGPASSWORD (pas de prompt).
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: eshop-secrets
+                      key: postgres-password
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  PGHOST=postgres
+                  PGUSER=postgres
+                  STAMP="$(date +%Y-%m-%d_%H%M%S)"
+                  DEST="/backups/${STAMP}"
+                  mkdir -p "${DEST}"
+
+                  echo "Sauvegarde des 3 bases vers ${DEST}"
+                  for db in catalogdb orderingdb identitydb; do
+                    echo "  -> pg_dump ${db}"
+                    # Dump SQL clair (restaurable via 'psql < fichier').
+                    pg_dump -h "${PGHOST}" -U "${PGUSER}" -d "${db}" \
+                      --no-owner --no-privileges \
+                      -f "${DEST}/${db}.sql"
+                  done
+
+                  echo "Sauvegarde terminée."
+
+                  # Rétention : supprimer les dossiers de dump de plus de 7 jours.
+                  echo "Nettoyage des sauvegardes de plus de 7 jours..."
+                  find /backups -maxdepth 1 -mindepth 1 -type d -mtime +7 \
+                    -exec rm -rf {} +
+
+                  echo "Sauvegardes restantes :"
+                  ls -1 /backups
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "256Mi"
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: postgres-backups

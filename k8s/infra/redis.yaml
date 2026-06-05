@@ -1,0 +1,137 @@
+# =============================================================================
+# Redis — stockage du panier (Basket.API)
+# -----------------------------------------------------------------------------
+# StatefulSet 1 réplica avec persistance AOF (append-only file) : même si le
+# panier est "éphémère" métier, l'AOF + PVC évitent de perdre les paniers en
+# cours lors d'un redémarrage. Mot de passe requis (--requirepass) pour ne pas
+# exposer un Redis ouvert dans le cluster.
+# =============================================================================
+---
+# -----------------------------------------------------------------------------
+# Service ClusterIP : les applis se connectent via "redis:6379" (cf. contrat
+# ConnectionStrings__redis = redis:6379,password=...).
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: redis
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+---
+# -----------------------------------------------------------------------------
+# Service headless : identité DNS stable requise par le StatefulSet.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: redis
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: redis
+spec:
+  serviceName: redis-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: redis
+    spec:
+      # L'image officielle redis tourne sous l'utilisateur "redis" (uid 999).
+      # fsGroup pour que le pod puisse écrire l'AOF dans le PVC.
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: redis
+          image: redis:8
+          # --requirepass : authentification obligatoire.
+          # --appendonly yes : persistance AOF (durabilité des écritures).
+          # On passe par "sh -c" pour que $(REDIS_PASSWORD) soit substitué.
+          command:
+            - sh
+            - -c
+            - exec redis-server --requirepass "$REDIS_PASSWORD" --appendonly yes
+          ports:
+            - name: redis
+              containerPort: 6379
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-secrets
+                  key: redis-password
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          # Sondes via "redis-cli ... ping" (réponse PONG) en s'authentifiant.
+          # readiness : retire du Service tant que Redis ne répond pas.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # liveness : redémarre si le serveur ne répond plus.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+  # PVC 1Gi pour /data : persiste l'AOF entre redémarrages.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: eshop
+          app.kubernetes.io/name: redis
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

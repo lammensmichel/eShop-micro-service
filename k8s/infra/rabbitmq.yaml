@@ -1,0 +1,150 @@
+# =============================================================================
+# RabbitMQ — bus de messages (exchange "eshop_event_bus")
+# -----------------------------------------------------------------------------
+# StatefulSet 1 réplica avec PVC : les queues durables (déjà déclarées côté
+# code) et leur contenu doivent survivre aux redémarrages -> persistance de
+# /var/lib/rabbitmq. Image "-management" pour disposer de l'UI d'admin, MAIS
+# le port 15672 N'EST PAS exposé publiquement (pas d'Ingress dessus), il reste
+# uniquement joignable in-cluster pour le debug.
+# =============================================================================
+---
+# -----------------------------------------------------------------------------
+# Service ClusterIP : AMQP (5672) pour les applis (ConnectionStrings__rabbitmq
+# = amqp://user:pwd@rabbitmq:5672) + management (15672) accessible seulement
+# in-cluster (port-forward pour le debug).
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: rabbitmq
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+      protocol: TCP
+    - name: management
+      port: 15672
+      targetPort: 15672
+      protocol: TCP
+---
+# -----------------------------------------------------------------------------
+# Service headless : identité DNS stable requise par le StatefulSet.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-headless
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: rabbitmq
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+      protocol: TCP
+    - name: management
+      port: 15672
+      targetPort: 15672
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: rabbitmq
+spec:
+  serviceName: rabbitmq-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rabbitmq
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: rabbitmq
+    spec:
+      # L'image officielle rabbitmq tourne sous l'utilisateur "rabbitmq"
+      # (uid 999). fsGroup pour les droits d'écriture sur le PVC.
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4-management
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+          env:
+            # Utilisateur/mot de passe par défaut depuis le Secret eshop-secrets.
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-secrets
+                  key: rabbitmq-user
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-secrets
+                  key: rabbitmq-password
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+          # Sondes via rabbitmq-diagnostics : "ping" vérifie que le noeud Erlang
+          # est joignable. -q pour une sortie silencieuse (code de retour seul).
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            # RabbitMQ démarre lentement (VM Erlang) : délai initial élevé pour
+            # ne pas le tuer pendant le boot.
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+  # PVC 1Gi pour /var/lib/rabbitmq : persiste l'état du broker (queues durables,
+  # messages persistants) entre redémarrages.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: eshop
+          app.kubernetes.io/name: rabbitmq
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

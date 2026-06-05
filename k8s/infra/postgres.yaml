@@ -1,0 +1,190 @@
+# =============================================================================
+# PostgreSQL — base de données relationnelle pour eShop
+# -----------------------------------------------------------------------------
+# StatefulSet 1 réplica : Postgres est *stateful*, son identité réseau stable
+# (postgres-0 via le Service headless) et son PVC dédié garantissent qu'on
+# retrouve toujours les MÊMES données après un redémarrage / reschedule du pod.
+# On crée 3 bases (catalogdb, orderingdb, identitydb) au premier boot via un
+# script monté dans /docker-entrypoint-initdb.d.
+# =============================================================================
+---
+# -----------------------------------------------------------------------------
+# ConfigMap d'initialisation : exécuté UNE SEULE FOIS, au tout premier démarrage
+# du cluster Postgres (quand PGDATA est vide). Crée les 3 bases applicatives.
+# Idempotent : on teste l'existence avant CREATE DATABASE pour éviter une erreur
+# si jamais le script est rejoué.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: postgres
+data:
+  10-create-databases.sh: |
+    #!/bin/bash
+    # Création des 3 bases applicatives. "$POSTGRES_USER" (postgres) est déjà
+    # le super-utilisateur ; on crée les bases vides, les migrations EF Core
+    # (Jobs migrate-*) se chargent du schéma.
+    set -euo pipefail
+
+    create_db() {
+      local db="$1"
+      # On ne crée la base que si elle n'existe pas déjà (rejouabilité).
+      if psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1; then
+        echo "Base ${db} déjà présente, on saute."
+      else
+        echo "Création de la base ${db}..."
+        psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -c "CREATE DATABASE \"${db}\";"
+      fi
+    }
+
+    create_db "catalogdb"
+    create_db "orderingdb"
+    create_db "identitydb"
+---
+# -----------------------------------------------------------------------------
+# Service ClusterIP "normal" : point d'entrée stable pour les applis
+# (chaînes de connexion : Host=postgres;Port=5432). Équilibre vers le pod prêt.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+---
+# -----------------------------------------------------------------------------
+# Service headless (clusterIP: None) : requis par le StatefulSet pour donner
+# une identité DNS stable au pod (postgres-0.postgres-headless.eshop.svc).
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: postgres
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: postgres
+spec:
+  serviceName: postgres-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: eshop
+        app.kubernetes.io/name: postgres
+    spec:
+      # securityContext : l'image officielle postgres tourne sous l'utilisateur
+      # "postgres" (uid 999). On force le groupe sur le volume via fsGroup pour
+      # que le pod puisse écrire dans le PVC.
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:17
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: eshop-secrets
+                  key: postgres-password
+            # PGDATA dans un SOUS-DOSSIER du volume : sur de nombreux systèmes
+            # le point de montage racine contient un "lost+found", ce qui fait
+            # échouer l'initdb de Postgres. Le sous-dossier "pgdata" évite ça.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            # Scripts d'init joués au premier boot (création des 3 bases).
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+          # readinessProbe : retire le pod du Service tant que Postgres n'accepte
+          # pas de connexions (pendant l'initdb par ex.). pg_isready est l'outil
+          # standard pour ça.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U postgres -h 127.0.0.1"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # livenessProbe : redémarre le conteneur si le serveur est figé.
+          # Délai initial confortable pour tolérer la création des bases.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U postgres -h 127.0.0.1"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+      volumes:
+        - name: initdb
+          configMap:
+            name: postgres-initdb
+            defaultMode: 0755
+  # volumeClaimTemplate : chaque pod du StatefulSet obtient SON PVC persistant
+  # de 5Gi. C'est le coeur du "zéro perte de données" : le volume survit aux
+  # redémarrages et reschedules du pod.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: eshop
+          app.kubernetes.io/name: postgres
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

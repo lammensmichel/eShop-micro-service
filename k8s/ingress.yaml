@@ -1,0 +1,73 @@
+# Ingress public de l'application eShop (ingress-nginx + cert-manager).
+# Les placeholders __DOMAIN__ sont substitués par start-prod.sh (sed).
+# Expose UNIQUEMENT le trafic applicatif : ni /health, ni /alive,
+# ni le management RabbitMQ (15672), ni les workers.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: eshop
+  namespace: eshop
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: eshop
+  annotations:
+    # cert-manager émet et renouvelle automatiquement les certificats TLS.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Taille de corps raisonnable (uploads d'images catalogue, etc.).
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  tls:
+    # Certificat du front + APIs navigateur.
+    - hosts:
+        - app.__DOMAIN__
+      secretName: app-tls
+    # Certificat de l'autorité OIDC Identity.
+    - hosts:
+        - id.__DOMAIN__
+      secretName: id-tls
+  rules:
+    # ---- Front (WebApp) + APIs appelées par le navigateur, routage par chemin ----
+    # Paths ordonnés du plus spécifique au moins spécifique.
+    - host: app.__DOMAIN__
+      http:
+        paths:
+          - path: /api/catalog
+            pathType: Prefix
+            backend:
+              service:
+                name: catalog-api
+                port:
+                  number: 8080
+          - path: /api/basket
+            pathType: Prefix
+            backend:
+              service:
+                name: basket-api
+                port:
+                  number: 8080
+          - path: /api/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: ordering-api
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: webapp
+                port:
+                  number: 8080
+    # ---- Autorité OIDC Identity (joignable publiquement) ----
+    - host: id.__DOMAIN__
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: identity-api
+                port:
+                  number: 8080
