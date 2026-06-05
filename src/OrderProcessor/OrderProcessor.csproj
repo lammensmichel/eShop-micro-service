@@ -1,4 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk.Worker">
+<!-- SDK Web (et non Worker) : nécessaire pour utiliser WebApplication.CreateBuilder
+     et exposer un pipeline HTTP (sondes /health et /alive pour Kubernetes). Le worker
+     reste un BackgroundService ; on ajoute juste l'hébergement HTTP de santé par-dessus. -->
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -13,7 +16,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
+    <!-- Microsoft.Extensions.Hosting n'est plus nécessaire en PackageReference : le SDK Web
+         (FrameworkReference Microsoft.AspNetCore.App) fournit déjà tout le hosting (générique
+         + WebApplication). On le retire pour éviter une référence redondante. -->
     <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
   </ItemGroup>
 </Project>

@@ -34,18 +34,18 @@ builder.AddDefaultAuthentication();
 // "redis" est le nom logique de la ressource déclarée par l'AppHost Aspire.
 builder.AddRedisClient("redis");
 
-// Point 7 — CORS restreint : origines lues depuis la configuration
-// ("Cors:AllowedOrigins"), avec un repli dev raisonnable (front local).
+// Point 7 — CORS restreint : origines lues UNIQUEMENT depuis la configuration
+// ("Cors:AllowedOrigins"). POURQUOI : plus aucune origine localhost codée en dur ici,
+//   pour ne pas qu'une URL de dev serve de repli en production.
+//   - DEV LOCAL INCHANGÉ : les origines localhost sont fournies par appsettings.Development.json
+//     (clé "Cors:AllowedOrigins") -> comportement identique à avant.
+//   - PROD : l'origine est fournie par variable d'environnement / config ; si elle est absente
+//     ET qu'on n'est pas en Development, AUCUNE origine n'est autorisée (deny par défaut).
 const string CorsPolicy = "BasketCorsPolicy";
 var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
-    .Get<string[]>();
-
-if (allowedOrigins is null || allowedOrigins.Length == 0)
-{
-    // Repli dev : origines réelles du front Blazor / WebApp.Server (cf. launchSettings).
-    allowedOrigins = ["https://localhost:7204", "http://localhost:5274"];
-}
+    .Get<string[]>()
+    ?? Array.Empty<string>();
 
 builder.Services.AddCors(options =>
 {

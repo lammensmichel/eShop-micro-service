@@ -39,6 +39,10 @@ public class RabbitMQConsumer : BackgroundService
     private IConnection? _connection;
     private IChannel? _channel;
 
+    // Tag du consumer renvoyé par BasicConsumeAsync. On le conserve pour pouvoir
+    // l'annuler (BasicCancelAsync) lors de l'arrêt propre (graceful shutdown).
+    private string? _consumerTag;
+
     private const string ExchangeName = "eshop_event_bus";
 
     // Queue unique d'Ordering liée à toutes les routing keys consommées.
@@ -146,7 +150,7 @@ public class RabbitMQConsumer : BackgroundService
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += OnMessageReceivedAsync;
 
-        await _channel.BasicConsumeAsync(
+        _consumerTag = await _channel.BasicConsumeAsync(
             queue: QueueName,
             autoAck: false,
             consumer: consumer,
@@ -401,6 +405,24 @@ public class RabbitMQConsumer : BackgroundService
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        // GRACEFUL SHUTDOWN (déploiement zéro-interruption K8s) :
+        // AVANT de disposer le channel/la connexion, on ANNULE le consumer (BasicCancelAsync)
+        // pour CESSER de recevoir de nouveaux messages. Les handlers déjà en cours peuvent
+        // alors se terminer ; tout message non encore acquitté sera REDÉLIVRÉ par le broker
+        // (la garantie « au moins une fois » + l'idempotence évitent toute perte/double effet).
+        // try/catch (log warning) : si le broker est déjà coupé, l'arrêt ne doit pas planter.
+        if (_channel is not null && _consumerTag is not null)
+        {
+            try
+            {
+                await _channel.BasicCancelAsync(_consumerTag, cancellationToken: cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Échec de l'annulation du consumer RabbitMQ au moment de l'arrêt");
+            }
+        }
+
         if (_channel is not null) await _channel.DisposeAsync();
         if (_connection is not null) await _connection.DisposeAsync();
         await base.StopAsync(cancellationToken);

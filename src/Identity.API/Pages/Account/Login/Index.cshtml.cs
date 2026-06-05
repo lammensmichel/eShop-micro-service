@@ -27,6 +27,10 @@ public class LoginModel : PageModel
     private readonly SignInManager<ApplicationUser> _signInManager;
     // Service d'interaction IdentityServer : permet notamment de valider les ReturnUrl du flux OIDC.
     private readonly IIdentityServerInteractionService _interaction;
+    // Logger : on journalise via ILogger (et non Console.WriteLine), avec des messages
+    // ANONYMISÉS. On ne logge JAMAIS l'identifiant ni le mot de passe : ce sont des
+    // données sensibles qui ne doivent pas se retrouver en clair dans les logs.
+    private readonly ILogger<LoginModel> _logger;
 
     // [BindProperty] : ces propriétés sont liées automatiquement aux champs du formulaire POST.
     [BindProperty] public string Username { get; set; } = string.Empty;
@@ -38,10 +42,12 @@ public class LoginModel : PageModel
 
     public LoginModel(
         SignInManager<ApplicationUser> signInManager,
-        IIdentityServerInteractionService interaction)
+        IIdentityServerInteractionService interaction,
+        ILogger<LoginModel> logger)
     {
         _signInManager = signInManager;
         _interaction = interaction;
+        _logger = logger;
     }
 
     // GET : affichage initial du formulaire. On mémorise simplement le ReturnUrl reçu.
@@ -55,7 +61,8 @@ public class LoginModel : PageModel
     {
         ReturnUrl = returnUrl ?? "/";
 
-        Console.WriteLine($"Login attempt: Username={Username}, ReturnUrl={ReturnUrl}");
+        // Log ANONYMISÉ : aucun identifiant ni mot de passe (données sensibles).
+        _logger.LogInformation("Tentative de connexion reçue.");
 
         // PasswordSignInAsync vérifie l'identifiant et compare le mot de passe à son
         // HASH stocké (jamais comparé en clair), puis crée le cookie de session.
@@ -65,16 +72,20 @@ public class LoginModel : PageModel
         var result = await _signInManager.PasswordSignInAsync(
             Username, Password, isPersistent: false, lockoutOnFailure: false);
 
-        Console.WriteLine($"Login result: Succeeded={result.Succeeded}");
-
         if (result.Succeeded)
         {
+            // Log ANONYMISÉ : on signale le succès sans révéler QUI s'est connecté.
+            _logger.LogInformation("Connexion réussie.");
+
             // Garde anti "open redirect" : on ne redirige que vers une ReturnUrl reconnue
             // par IdentityServer (flux OIDC) ou une URL locale ; sinon retour à l'accueil.
             if (_interaction.IsValidReturnUrl(ReturnUrl) || Url.IsLocalUrl(ReturnUrl))
                 return Redirect(ReturnUrl);
             return Redirect("/");
         }
+
+        // Log ANONYMISÉ : on signale l'échec sans révéler l'identifiant essayé.
+        _logger.LogWarning("Échec de connexion.");
 
         // Échec : on réaffiche la page avec un message d'erreur générique
         // (on ne précise pas si c'est le login ou le mot de passe qui est faux).

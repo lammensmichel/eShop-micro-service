@@ -65,7 +65,10 @@ builder.Services
     // Chargement "en mémoire" de la configuration définie dans Config.cs :
     .AddInMemoryIdentityResources(Config.IdentityResources)  // scopes d'identité (openid, profile, roles...).
     .AddInMemoryApiScopes(Config.ApiScopes)                  // permissions d'accès aux APIs (catalog, basket...).
-    .AddInMemoryClients(Config.Clients)                      // applications autorisées (le front "webapp").
+    // Clients construits à partir de la configuration : l'URL publique du front
+    // (Identity:WebAppUrl) n'est plus codée en dur. Dev local INCHANGÉ : la valeur
+    // vient d'appsettings.Development.json (https://localhost:7204).
+    .AddInMemoryClients(Config.Clients(builder.Configuration)) // applications autorisées (le front "webapp").
     .AddAspNetIdentity<ApplicationUser>()                    // relie IdentityServer au store Identity.
     .AddProfileService<CustomProfileService>();              // injecte les rôles dans les jetons (cf. CustomProfileService).
 
@@ -84,23 +87,72 @@ app.UseAuthorization();
 app.MapDefaultEndpoints();
 app.MapRazorPages();      // mappe les pages login/logout/erreur.
 
-// Démarrage : vérification de connexion, migrations, puis seed des rôles/utilisateurs.
-using (var scope = app.Services.CreateScope())
+// ============================================================================
+// MIGRATIONS + SEED — deux scénarios distincts selon l'environnement.
+//
+// POURQUOI distinguer : en prod Kubernetes, on préfère appliquer les migrations
+//   via un JOB dédié (conteneur lancé AVANT l'app, avec l'argument "--migrate"),
+//   plutôt que de migrer la base au démarrage de CHAQUE réplique (course entre
+//   pods, démarrage ralenti). C'est l'approche des autres APIs du système.
+//
+//   1) Mode "--migrate" : on migre + seed puis on SORT (return), sans démarrer
+//      le serveur web. C'est ce que lance le Job Kubernetes.
+//   2) Démarrage normal : on ne migre au boot QUE si :
+//        - on est en Development (dev local INCHANGÉ : Aspire migre au démarrage), OU
+//        - la config "RunMigrationsAtStartup" est explicitement à true.
+//      Sinon (prod par défaut) on suppose que le Job "--migrate" l'a déjà fait.
+// ============================================================================
+
+// Fonction locale : applique les migrations puis le seed, avec un RETRY simple
+// (la base Postgres peut ne pas être prête immédiatement au démarrage du pod).
+static async Task MigrateAndSeedAsync(IServiceProvider services)
 {
-    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    // Échoue tôt et clairement si la base n'est pas joignable (utile en démarrage Aspire).
-    if (!await db.Database.CanConnectAsync())
-    throw new Exception("Cannot connect to database");
-    Console.WriteLine("🔄 Applying migrations...");
-    await db.Database.MigrateAsync();
-    Console.WriteLine("✅ Migrations applied!");
+    using var scope = services.CreateScope();
+    var sp = scope.ServiceProvider;
+    var db = sp.GetRequiredService<ApplicationDbContext>();
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("Migration");
+
+    // Retry simple : on retente quelques fois si la base n'est pas encore joignable.
+    const int maxAttempts = 10;
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            logger.LogInformation("Application des migrations (tentative {Attempt}/{Max})...", attempt, maxAttempts);
+            await db.Database.MigrateAsync();
+            logger.LogInformation("Migrations appliquées.");
+            break;
+        }
+        catch (Exception ex) when (attempt < maxAttempts)
+        {
+            logger.LogWarning(ex, "Échec de migration, nouvelle tentative dans 3 s...");
+            await Task.Delay(TimeSpan.FromSeconds(3));
+        }
+    }
 
     // UserManager / RoleManager sont nécessaires au seed (hachage du mot de passe, rôles).
-    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
-    Console.WriteLine("🌱 Starting seed...");
-    await ApplicationDbContextSeed.SeedAsync(db, userManager, roleManager);
-    Console.WriteLine("✅ Seed complete!");
+    var userManager = sp.GetRequiredService<UserManager<ApplicationUser>>();
+    var roleManager = sp.GetRequiredService<RoleManager<IdentityRole>>();
+    logger.LogInformation("Démarrage du seed...");
+    // Le seed reçoit la configuration : rôles inconditionnels, users démo conditionnels.
+    await ApplicationDbContextSeed.SeedAsync(db, userManager, roleManager, configuration);
+    logger.LogInformation("Seed terminé.");
+}
+
+// Mode 1 — exécution dédiée "--migrate" (Job Kubernetes) : migrer + seed, puis sortir.
+if (args.Contains("--migrate"))
+{
+    await MigrateAndSeedAsync(app.Services);
+    return;
+}
+
+// Mode 2 — démarrage normal : on ne migre au boot que si Development OU opt-in explicite.
+// Dev local INCHANGÉ : IsDevelopment() est vrai => migration + seed comme avant.
+if (app.Environment.IsDevelopment()
+    || builder.Configuration.GetValue("RunMigrationsAtStartup", false))
+{
+    await MigrateAndSeedAsync(app.Services);
 }
 
 // Endpoint racine minimal : simple "ping" de vérification que le service tourne.

@@ -35,16 +35,16 @@ builder.AddDefaultAuthentication();
 builder.AddNpgsqlDbContext<OrderingDbContext>("orderingdb");
 
 // CORS : autorise le front (origine distincte) à appeler cette API depuis le navigateur.
-// Politique restreinte aux origines lues en configuration (clé "Cors:AllowedOrigins"),
-// avec un repli dev raisonnable.
+// Politique restreinte aux origines lues UNIQUEMENT en configuration (clé "Cors:AllowedOrigins").
+// POURQUOI : plus aucune origine localhost codée en dur ici, pour ne pas qu'une URL de dev
+//   serve de repli en production.
+//   - DEV LOCAL INCHANGÉ : les origines localhost sont fournies par appsettings.Development.json
+//     (clé "Cors:AllowedOrigins") -> comportement identique à avant.
+//   - PROD : l'origine est fournie par variable d'environnement / config ; si elle est absente
+//     ET qu'on n'est pas en Development, AUCUNE origine n'est autorisée (deny par défaut).
 const string CorsPolicy = "OrderingCors";
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
-if (allowedOrigins is null || allowedOrigins.Length == 0)
-{
-    // Repli pour le développement local : ports réels de WebApp.Server (front qui appelle Ordering.API).
-    // À surcharger en configuration via la clé "Cors:AllowedOrigins".
-    allowedOrigins = ["https://localhost:7204", "http://localhost:5274"];
-}
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? Array.Empty<string>();
 
 builder.Services.AddCors(options =>
 {
@@ -85,6 +85,21 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
+// ----------------------------------------------------------------------------
+// MODE MIGRATION « one-shot » (déclenché par l'argument --migrate).
+// POURQUOI : en production Kubernetes (déploiement zéro-interruption), les migrations
+//   de schéma sont exécutées par un Job K8s qui lance LA MÊME image avec --migrate :
+//   le process applique les migrations puis se termine proprement (return => code 0).
+//   Les pods applicatifs NE migrent PLUS au démarrage en prod (voir plus bas).
+// DEV LOCAL INCHANGÉ : Aspire ne passe pas --migrate, ce bloc est ignoré en dev.
+if (args.Contains("--migrate"))
+{
+    using var migrationScope = app.Services.CreateScope();
+    var migrationDb = migrationScope.ServiceProvider.GetRequiredService<OrderingDbContext>();
+    await MigrateWithRetryAsync(migrationDb);
+    return; // Fin du process : le Job K8s se termine ici (succès).
+}
+
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
@@ -109,16 +124,44 @@ app.Use(async (context, next) =>
 });
 
 // Au démarrage, on applique les migrations EF Core en attente (crée/maj le schéma).
-// Pratique en dev/démo ; en production on préférerait souvent un step de migration dédié.
-using (var scope = app.Services.CreateScope())
+// POURQUOI conditionner : en production K8s, c'est le Job de migration (--migrate) qui
+//   applique le schéma, PAS les pods applicatifs (plusieurs replicas migrant en parallèle
+//   = course / verrous). On migre donc au démarrage UNIQUEMENT en Development, ou si on
+//   force explicitement via la config "RunMigrationsAtStartup".
+// DEV LOCAL INCHANGÉ : en Development (Aspire), IsDevelopment() est vrai => on migre au
+//   démarrage exactement comme avant.
+if (app.Environment.IsDevelopment()
+    || builder.Configuration.GetValue<bool>("RunMigrationsAtStartup", false))
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<OrderingDbContext>();
-    if (!await db.Database.CanConnectAsync())
-    throw new Exception("Cannot connect to database");
-
-    await db.Database.MigrateAsync();
+    await MigrateWithRetryAsync(db);
 }
 
 app.MapOrderingApi().RequireAuthorization();
 
 app.Run();
+
+// Applique les migrations EF avec un retry simple. POURQUOI : au démarrage d'un cluster
+// (ou d'un Job lancé en même temps que Postgres), la base peut ne pas être ENCORE prête à
+// accepter des connexions ; quelques tentatives espacées évitent un échec immédiat.
+// DEV LOCAL INCHANGÉ : en dev la base répond vite, le premier essai réussit normalement.
+static async Task MigrateWithRetryAsync(OrderingDbContext db)
+{
+    const int maxAttempts = 5;
+    var delay = TimeSpan.FromSeconds(3);
+
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            await db.Database.MigrateAsync();
+            return;
+        }
+        catch when (attempt < maxAttempts)
+        {
+            // Base probablement pas encore prête : on patiente puis on réessaie.
+            await Task.Delay(delay);
+        }
+    }
+}

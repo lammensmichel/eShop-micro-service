@@ -103,8 +103,14 @@ public static class Extensions
             .AddJwtBearer(options =>
             {
                 options.Authority = identityUrl;
-                // localhost en dev : autorise la récupération des métadonnées sans exiger HTTPS strict.
-                options.RequireHttpsMetadata = false;
+                // RequireHttpsMetadata : exige (ou non) que la récupération des métadonnées
+                // OIDC de l'authority se fasse en HTTPS strict.
+                //   - DEV LOCAL (Aspire) : l'authority est en http(s) localhost et le certificat
+                //     de dev peut poser problème -> on garde le défaut false (comportement inchangé).
+                //   - PROD K8s : l'Identity est servi derrière TLS ; on surcharge à true via la
+                //     config/env (clé "Identity__RequireHttpsMetadata=true") pour empêcher toute
+                //     récupération de métadonnées en clair (sécurité).
+                options.RequireHttpsMetadata = builder.Configuration.GetValue<bool>("Identity:RequireHttpsMetadata", false);
                 // Aucune ApiResource n'est définie dans Identity.API (uniquement des ApiScopes),
                 // donc le jeton ne porte pas de claim "aud" -> on ne valide pas l'audience.
                 options.TokenValidationParameters.ValidateAudience = false;
@@ -173,6 +179,13 @@ public static class Extensions
         // Aspire injecte la variable OTEL_EXPORTER_OTLP_ENDPOINT (URL de son collecteur)
         // dans chaque service : sa simple présence suffit à activer l'export OTLP, qui
         // alimente le tableau de bord. En dehors d'Aspire, la variable est absente -> pas d'export.
+        //
+        // EN PROD K8s : cette même variable OTEL_EXPORTER_OTLP_ENDPOINT est injectée dans le pod
+        // (via Deployment env/ConfigMap) et pointe vers le collecteur OpenTelemetry du cluster
+        // (ex. "http://otel-collector.observability:4317"), qui relaie ensuite vers le backend
+        // (Tempo/Jaeger, Prometheus, Loki...). Le code reste identique : seule la valeur de la
+        // variable change selon l'environnement. Si elle est absente, on n'enregistre AUCUN
+        // exporter -> le service démarre quand même normalement (pas de plantage).
         var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 
         if (useOtlpExporter)
@@ -208,22 +221,57 @@ public static class Extensions
     // workers OrderProcessor/PaymentProcessor n'ont pas de pipeline HTTP et ne l'appellent pas).
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
-        // Exposer ces endpoints en production a des implications de sécurité (ils révèlent
-        // l'état interne) : on les limite donc à l'environnement de développement.
-        // Voir https://aka.ms/aspire/healthchecks avant de les activer en production.
-        if (app.Environment.IsDevelopment())
+        // ------------------------------------------------------------------
+        // EN-TÊTES DE SÉCURITÉ (security headers)
+        // ------------------------------------------------------------------
+        // Middleware léger qui pose des en-têtes de durcissement sur TOUTES les
+        // réponses HTTP. Ces en-têtes sont sans risque en dev comme en prod :
+        //   - X-Content-Type-Options=nosniff : empêche le navigateur de « deviner »
+        //     un type MIME différent de celui annoncé (anti MIME-sniffing) ;
+        //   - X-Frame-Options=DENY : interdit l'inclusion dans un <iframe> (anti-clickjacking) ;
+        //   - Referrer-Policy=no-referrer : ne divulgue pas l'URL d'origine aux tiers.
+        app.Use(async (context, next) =>
         {
-            // /health (readiness) : TOUS les checks doivent passer -> le service est prêt à
-            // recevoir du trafic. C'est ce que WaitFor de l'AppHost interroge.
-            app.MapHealthChecks(HealthEndpointPath);
+            var headers = context.Response.Headers;
+            headers["X-Content-Type-Options"] = "nosniff";
+            headers["X-Frame-Options"] = "DENY";
+            headers["Referrer-Policy"] = "no-referrer";
+            await next();
+        });
 
-            // /alive (liveness) : seuls les checks taggés "live" doivent passer -> le service
-            // est simplement vivant (même si une dépendance n'est pas encore prête).
-            app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
-            {
-                Predicate = r => r.Tags.Contains("live")
-            });
+        // HSTS (HTTP Strict Transport Security) : force le navigateur à n'utiliser que
+        // HTTPS pour ce domaine. On ne l'active QUE hors Development :
+        //   - DEV LOCAL : on tourne en http/localhost avec certificat de dev -> activer
+        //     HSTS « épinglerait » HTTPS dans le navigateur et casserait l'expérience dev.
+        //   - PROD K8s : le trafic arrive derrière un Ingress/terminaison TLS -> HSTS a du sens.
+        if (!app.Environment.IsDevelopment())
+        {
+            app.UseHsts();
         }
+
+        // ------------------------------------------------------------------
+        // SONDES DE SANTÉ (health checks)
+        // ------------------------------------------------------------------
+        // CIBLE K8s : kubelet sonde liveness/readiness via HTTP. Ces endpoints DOIVENT
+        // donc être exposés en permanence (et pas seulement en dev), sinon les probes
+        // échouent et le pod est tué ou retiré du service -> impossible de déployer en
+        // zéro-interruption. On retire donc l'ancien gate IsDevelopment().
+        // (En prod, restreindre l'accès réseau à ces routes relève de l'Ingress/NetworkPolicy,
+        //  pas de ce socle.) Voir https://aka.ms/aspire/healthchecks.
+
+        // /health (readiness) : TOUS les checks doivent passer (dépendances incluses) ->
+        // le service est prêt à recevoir du trafic. C'est ce que la readinessProbe K8s
+        // (et WaitFor de l'AppHost en dev) interroge.
+        app.MapHealthChecks(HealthEndpointPath);
+
+        // /alive (liveness) : seuls les checks taggés "live" doivent passer (self uniquement,
+        // pas les dépendances) -> le process est vivant même si une dépendance n'est pas
+        // encore prête. C'est ce que la livenessProbe K8s interroge ; on ne veut pas qu'une
+        // dépendance momentanément KO provoque le redémarrage du pod.
+        app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
+        {
+            Predicate = r => r.Tags.Contains("live")
+        });
 
         return app;
     }

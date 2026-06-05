@@ -56,9 +56,14 @@ public class PaymentWorker : BackgroundService
     private readonly IEventBus _eventBus;
     private readonly IPaymentGateway _gateway;
     private readonly ILogger<PaymentWorker> _logger;
+    private readonly ConsumerState _consumerState;
     private readonly string _connectionString;
     private IConnection? _connection;
     private IChannel? _channel;
+
+    // Tag du consommateur renvoyé par BasicConsumeAsync : nécessaire pour ANNULER
+    // proprement la consommation (BasicCancelAsync) lors de l'arrêt gracieux.
+    private string? _consumerTag;
 
     private const string ExchangeName = "eshop_event_bus";
 
@@ -77,15 +82,20 @@ public class PaymentWorker : BackgroundService
     // ILogger (journalisation -> OpenTelemetry), IConfiguration (chaîne de connexion).
     // NOTE : le worker NE LIT PLUS Payment:AlwaysFail — c'est désormais la passerelle
     // (SimulatedPaymentGateway) qui gère ce détail de simulation.
+    //   - ConsumerState : état partagé avec le health check ; on y positionne
+    //                     IsConsuming=true une fois l'abonnement RabbitMQ effectif,
+    //                     ce qui rend le worker « prêt » (readiness K8s).
     public PaymentWorker(
         IEventBus eventBus,
         IPaymentGateway gateway,
         ILogger<PaymentWorker> logger,
+        ConsumerState consumerState,
         IConfiguration configuration)
     {
         _eventBus = eventBus;
         _gateway = gateway;
         _logger = logger;
+        _consumerState = consumerState;
         // Chaîne de connexion injectée par Aspire via WithReference(rabbitmq) — pas d'URL en dur.
         _connectionString = configuration.GetConnectionString("rabbitmq")!;
     }
@@ -124,11 +134,18 @@ public class PaymentWorker : BackgroundService
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += OnMessageReceivedAsync;
 
-        await _channel.BasicConsumeAsync(
+        // BasicConsumeAsync renvoie le tag du consommateur : on le mémorise pour pouvoir
+        // ANNULER la consommation à l'arrêt (voir StopAsync).
+        _consumerTag = await _channel.BasicConsumeAsync(
             queue: QueueName,
             autoAck: false, // ack manuel : on acquitte seulement après publication du résultat
             consumer: consumer,
             cancellationToken: stoppingToken);
+
+        // À ce stade l'abonnement est effectif : on signale au health check que le worker
+        // CONSOMME -> la readiness K8s passe au vert. Tant que ce drapeau est false, /health
+        // reste « unhealthy » (le pod ne reçoit pas encore de trafic, mais /alive reste OK).
+        _consumerState.IsConsuming = true;
 
         _logger.LogInformation(
             "PaymentProcessor démarré : écoute '{RoutingKey}', passerelle {Gateway}",
@@ -229,10 +246,32 @@ public class PaymentWorker : BackgroundService
         }
     }
 
-    // Arrêt propre : libère canal puis connexion. Les messages non acquittés seront
-    // redélivrés au prochain démarrage (le paiement sera donc rejoué -> idempotence).
+    // Arrêt GRACIEUX : appelé par l'hôte sur SIGTERM (K8s) / Ctrl+C. L'ordre est important :
+    //   1. ANNULER d'abord la consommation (BasicCancelAsync) : le broker cesse de nous
+    //      livrer de nouveaux messages -> aucune livraison ne démarre alors qu'on ferme le
+    //      canal (sinon on risque des exceptions ou des messages « happés » puis perdus) ;
+    //   2. SEULEMENT ensuite, disposer le canal puis la connexion.
+    // On marque aussi IsConsuming=false pour que la readiness retombe immédiatement (le pod
+    // est retiré du service pendant le drain). Les messages non acquittés restent en queue et
+    // seront redélivrés au prochain démarrage (le paiement sera donc rejoué -> idempotence).
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        _consumerState.IsConsuming = false;
+
+        // Annulation de la consommation, isolée dans un try/catch : un arrêt ne doit JAMAIS
+        // échouer à cause d'un canal déjà fermé ou d'un broker injoignable -> on logue en warning.
+        try
+        {
+            if (_channel is not null && _consumerTag is not null)
+            {
+                await _channel.BasicCancelAsync(_consumerTag, cancellationToken: cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Échec de l'annulation du consommateur RabbitMQ lors de l'arrêt.");
+        }
+
         if (_channel is not null) await _channel.DisposeAsync();
         if (_connection is not null) await _connection.DisposeAsync();
         await base.StopAsync(cancellationToken);

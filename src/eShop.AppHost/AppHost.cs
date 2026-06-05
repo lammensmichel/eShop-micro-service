@@ -161,11 +161,18 @@ var orderingApi = builder.AddProject<Projects.Ordering_API>("ordering-api")
 // sans dommage), l'ordre de démarrage ENTRE eux n'a aucune importance : seul RabbitMQ
 // doit être prêt. Un message arrivé avant qu'un worker soit lancé patiente simplement
 // dans sa queue durable jusqu'à ce qu'un consommateur se présente.
+// NB : les workers exposent désormais un mini-serveur HTTP de SANTÉ (/health, /alive)
+// pour les sondes Kubernetes (ils sont passés en WebApplication). WithHttpEndpoint()
+// demande à Aspire d'allouer un port HTTP DISTINCT à chacun (et d'injecter ASPNETCORE_URLS) :
+// sans cela, deux WebApplication sans port déclaré tenteraient de binder le port Kestrel
+// par défaut (5000) et entreraient en conflit en dev local.
 builder.AddProject<Projects.OrderProcessor>("orderprocessor")
+    .WithHttpEndpoint()
     .WithReference(rabbitmq)
     .WaitFor(rabbitmq);
 
 builder.AddProject<Projects.PaymentProcessor>("paymentprocessor")
+    .WithHttpEndpoint()
     .WithReference(rabbitmq)
     .WaitFor(rabbitmq);
 

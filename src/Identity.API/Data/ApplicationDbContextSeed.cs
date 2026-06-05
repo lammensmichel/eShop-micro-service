@@ -1,5 +1,6 @@
 using Identity.API.Models;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
 
 namespace Identity.API.Data;
 
@@ -32,9 +33,14 @@ public static class ApplicationDbContextSeed
     public static async Task SeedAsync(
         ApplicationDbContext context,
         UserManager<ApplicationUser> userManager,
-        RoleManager<IdentityRole> roleManager)
+        RoleManager<IdentityRole> roleManager,
+        IConfiguration configuration)
     {
-        // Crée les rôles
+        // ----- RÔLES : seed INCONDITIONNEL -----
+        // Les rôles "Admin"/"Customer" sont nécessaires au fonctionnement de
+        // l'autorisation ([Authorize(Roles=...)]) dans TOUS les environnements,
+        // y compris en prod. On les seed donc toujours, indépendamment de la
+        // présence ou non d'utilisateurs de démo.
         // "Admin" : accès en écriture au catalogue (POST/PUT/DELETE).
         // "Customer" : client standard (panier, commandes).
         // Garde d'idempotence rôle par rôle : on ne (re)crée que s'il manque.
@@ -44,8 +50,28 @@ public static class ApplicationDbContextSeed
         if (!await roleManager.RoleExistsAsync("Customer"))
             await roleManager.CreateAsync(new IdentityRole("Customer"));
 
+        // ----- UTILISATEURS DÉMO : seed CONDITIONNEL -----
+        // POURQUOI conditionner : alice/bob avec un mot de passe connu sont pratiques
+        // en dev mais constituent un TROU DE SÉCURITÉ en prod (comptes par défaut).
+        //   - Dev local INCHANGÉ : appsettings.Development.json met "Identity:SeedDemoUsers"
+        //     à true => alice/bob sont seedés exactement comme avant.
+        //   - Prod : la clé vaut false (défaut hors Development) => AUCUN user démo créé.
+        //
+        // COMMENT CRÉER UN ADMIN EN PROD (hors seed) : ne PAS passer par ce seed.
+        //   Provisionner un compte admin réel par un canal sûr, par exemple :
+        //     - un job/CLI ponctuel appelant UserManager.CreateAsync + AddToRoleAsync,
+        //       avec un mot de passe fort fourni par un secret (Kubernetes Secret),
+        //     - ou la console d'administration une fois un premier admin amorcé.
+        var seedDemoUsers = configuration.GetValue("Identity:SeedDemoUsers", false);
+        if (!seedDemoUsers) return;
+
         // Si des utilisateurs existent déjà, on ne re-seed pas (évite les doublons au redémarrage).
         if (userManager.Users.Any()) return;
+
+        // Mot de passe des comptes de démo, lu depuis la configuration.
+        // Dev local INCHANGÉ : "Identity:DemoPassword" = "Pass123$" dans
+        // appsettings.Development.json. Repli sur "Pass123$" par sécurité.
+        var demoPassword = configuration["Identity:DemoPassword"] ?? "Pass123$";
 
         // Utilisateur de démo "alice" : sera Admin + Customer (peut tout faire).
         var alice = new ApplicationUser
@@ -67,10 +93,11 @@ public static class ApplicationDbContextSeed
             EmailConfirmed = true
         };
 
-        // Création avec mot de passe : UserManager hache "Pass123$" avant de persister.
-        // (Mot de passe identique pour les deux comptes, uniquement pour la démo.)
-        await userManager.CreateAsync(alice, "Pass123$");
-        await userManager.CreateAsync(bob, "Pass123$");
+        // Création avec mot de passe : UserManager hache le mot de passe (issu de la
+        // config) avant de persister. (Mot de passe identique pour les deux comptes,
+        // uniquement pour la démo.)
+        await userManager.CreateAsync(alice, demoPassword);
+        await userManager.CreateAsync(bob, demoPassword);
 
         // Attribution des rôles. alice cumule Admin + Customer ; bob n'est que Customer.
         // Ces rôles deviennent des claims "role" dans le jeton (cf. CustomProfileService).

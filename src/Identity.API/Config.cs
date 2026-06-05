@@ -1,4 +1,5 @@
 using Duende.IdentityServer.Models;
+using Microsoft.Extensions.Configuration;
 
 namespace Identity.API;
 
@@ -79,35 +80,53 @@ public static class Config
     ];
 
     // Clients : applications connues d'IdentityServer. Ici un seul client, le front Blazor.
-    public static IEnumerable<Client> Clients =>
-    [
-        new Client
-        {
-            ClientId = "webapp",
-            ClientName = "eShop Web App",
-            // Flux OAuth utilisé : Authorization Code. C'est le flux recommandé pour
-            // les applications web/SPA modernes (redirection vers la page de login).
-            AllowedGrantTypes = GrantTypes.Code,
-            // Client "PUBLIC" (SPA Blazor WASM) : son code tourne dans le navigateur,
-            // donc tout secret qu'on y placerait serait lisible par n'importe qui.
-            // Un client public ne peut donc PAS garder de secret confidentiel ;
-            // on n'exige pas de client secret. (Un client "confidentiel", lui — ex.
-            // un back-end serveur —, garderait un secret et s'authentifierait avec.)
-            RequireClientSecret = false,
-            // ...mais on EXIGE PKCE, qui sécurise le flux Authorization Code pour les
-            // clients publics (protège contre l'interception du code d'autorisation).
-            RequirePkce = true,
-            // URL de retour après login réussi (doit correspondre exactement à celle envoyée par le front).
-            RedirectUris = { "https://localhost:7204/authentication/login-callback" },
-            // URL de retour après déconnexion.
-            PostLogoutRedirectUris = { "https://localhost:7204/authentication/logout-callback" },
-            // Scopes que ce client a le droit de demander (identité + accès "eshop").
-            AllowedScopes = { "openid", "profile", "email", "roles", "eshop" },
-            // Origine autorisée pour les appels CORS du navigateur vers IdentityServer.
-            AllowedCorsOrigins = { "https://localhost:7204" },
-            // Inclut systématiquement les claims utilisateur (dont "role") dans l'ID Token,
-            // ce qui évite au front un appel supplémentaire au UserInfo endpoint.
-            AlwaysIncludeUserClaimsInIdToken = true
-        }
-    ];
+    //
+    // POURQUOI une METHODE qui prend IConfiguration plutôt qu'une propriété statique ?
+    //   Les URLs de retour (RedirectUris / PostLogout / CORS) dépendent de l'URL PUBLIQUE
+    //   du front, qui DIFFÈRE selon l'environnement : https://localhost:7204 en dev local,
+    //   mais un domaine public en prod Kubernetes. On ne peut donc plus la coder en dur.
+    //   On la lit dans la configuration sous la clé "Identity:WebAppUrl".
+    //   - Dev local INCHANGÉ : appsettings.Development.json fournit "https://localhost:7204",
+    //     donc le comportement reste exactement celui d'avant.
+    //   - Prod : la valeur est fournie par une variable d'environnement
+    //     (Identity__WebAppUrl) injectée par Kubernetes.
+    public static IEnumerable<Client> Clients(IConfiguration configuration)
+    {
+        // URL publique du front. Repli dev raisonnable si la clé est absente
+        // (préserve le comportement local historique : https://localhost:7204).
+        var webAppUrl = configuration["Identity:WebAppUrl"] ?? "https://localhost:7204";
+
+        return
+        [
+            new Client
+            {
+                ClientId = "webapp",
+                ClientName = "eShop Web App",
+                // Flux OAuth utilisé : Authorization Code. C'est le flux recommandé pour
+                // les applications web/SPA modernes (redirection vers la page de login).
+                AllowedGrantTypes = GrantTypes.Code,
+                // Client "PUBLIC" (SPA Blazor WASM) : son code tourne dans le navigateur,
+                // donc tout secret qu'on y placerait serait lisible par n'importe qui.
+                // Un client public ne peut donc PAS garder de secret confidentiel ;
+                // on n'exige pas de client secret. (Un client "confidentiel", lui — ex.
+                // un back-end serveur —, garderait un secret et s'authentifierait avec.)
+                RequireClientSecret = false,
+                // ...mais on EXIGE PKCE, qui sécurise le flux Authorization Code pour les
+                // clients publics (protège contre l'interception du code d'autorisation).
+                RequirePkce = true,
+                // URL de retour après login réussi (doit correspondre exactement à celle envoyée par le front).
+                // Construite à partir de l'URL publique du front (config), plus codée en dur.
+                RedirectUris = { $"{webAppUrl}/authentication/login-callback" },
+                // URL de retour après déconnexion.
+                PostLogoutRedirectUris = { $"{webAppUrl}/authentication/logout-callback" },
+                // Scopes que ce client a le droit de demander (identité + accès "eshop").
+                AllowedScopes = { "openid", "profile", "email", "roles", "eshop" },
+                // Origine autorisée pour les appels CORS du navigateur vers IdentityServer.
+                AllowedCorsOrigins = { webAppUrl },
+                // Inclut systématiquement les claims utilisateur (dont "role") dans l'ID Token,
+                // ce qui évite au front un appel supplémentaire au UserInfo endpoint.
+                AlwaysIncludeUserClaimsInIdToken = true
+            }
+        ];
+    }
 }

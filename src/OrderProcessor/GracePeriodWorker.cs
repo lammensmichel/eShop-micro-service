@@ -51,11 +51,16 @@ public class GracePeriodWorker : BackgroundService
 {
     private readonly IEventBus _eventBus;
     private readonly ILogger<GracePeriodWorker> _logger;
+    private readonly ConsumerState _consumerState;
     private readonly string _connectionString;
     private readonly TimeSpan _gracePeriod;
     private IConnection? _connection;
     private IChannel? _channel;
     private CancellationToken _stoppingToken;
+
+    // Tag du consommateur renvoyé par BasicConsumeAsync : nécessaire pour ANNULER
+    // proprement la consommation (BasicCancelAsync) lors de l'arrêt gracieux.
+    private string? _consumerTag;
 
     private const string ExchangeName = "eshop_event_bus";
 
@@ -73,13 +78,18 @@ public class GracePeriodWorker : BackgroundService
     //                  au-dessus de RabbitMQ -> on ne dépend pas de l'implémentation) ;
     //   - ILogger    : journalisation, remontée vers OpenTelemetry via ServiceDefaults ;
     //   - IConfiguration : accès aux réglages (chaîne de connexion, durée de grâce).
+    //   - ConsumerState : état partagé avec le health check ; on y positionne
+    //                     IsConsuming=true une fois l'abonnement RabbitMQ effectif,
+    //                     ce qui rend le worker « prêt » (readiness K8s).
     public GracePeriodWorker(
         IEventBus eventBus,
         ILogger<GracePeriodWorker> logger,
+        ConsumerState consumerState,
         IConfiguration configuration)
     {
         _eventBus = eventBus;
         _logger = logger;
+        _consumerState = consumerState;
         // La chaîne de connexion "rabbitmq" n'est PAS codée en dur : Aspire l'injecte
         // dans la configuration grâce au WithReference(rabbitmq) déclaré dans l'AppHost.
         _connectionString = configuration.GetConnectionString("rabbitmq")!;
@@ -132,11 +142,18 @@ public class GracePeriodWorker : BackgroundService
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += OnMessageReceivedAsync;
 
-        await _channel.BasicConsumeAsync(
+        // BasicConsumeAsync renvoie le tag du consommateur : on le mémorise pour pouvoir
+        // ANNULER la consommation à l'arrêt (voir StopAsync).
+        _consumerTag = await _channel.BasicConsumeAsync(
             queue: QueueName,
             autoAck: false, // accusé manuel : c'est NOUS qui décidons quand acquitter
             consumer: consumer,
             cancellationToken: stoppingToken);
+
+        // À ce stade l'abonnement est effectif : on signale au health check que le worker
+        // CONSOMME -> la readiness K8s passe au vert. Tant que ce drapeau est false, /health
+        // reste « unhealthy » (le pod ne reçoit pas encore de trafic, mais /alive reste OK).
+        _consumerState.IsConsuming = true;
 
         _logger.LogInformation(
             "OrderProcessor démarré : écoute '{RoutingKey}', période de grâce {Grace}s",
@@ -223,11 +240,32 @@ public class GracePeriodWorker : BackgroundService
         }
     }
 
-    // Arrêt propre : libère le canal puis la connexion RabbitMQ. Appelé par l'hôte
-    // lors d'un arrêt gracieux. Tout message non acquitté est automatiquement
-    // redélivré par le broker à un consommateur ultérieur (ici, au redémarrage).
+    // Arrêt GRACIEUX : appelé par l'hôte sur SIGTERM (K8s) / Ctrl+C. L'ordre est important :
+    //   1. ANNULER d'abord la consommation (BasicCancelAsync) : le broker cesse de nous
+    //      livrer de nouveaux messages -> aucune livraison ne démarre alors qu'on ferme le
+    //      canal (sinon on risque des exceptions ou des messages « happés » puis perdus) ;
+    //   2. SEULEMENT ensuite, disposer le canal puis la connexion.
+    // On marque aussi IsConsuming=false pour que la readiness retombe immédiatement (le pod
+    // est retiré du service pendant le drain). Tout message non acquitté reste en queue et
+    // sera redélivré au prochain démarrage (garantie at-least-once).
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        _consumerState.IsConsuming = false;
+
+        // Annulation de la consommation, isolée dans un try/catch : un arrêt ne doit JAMAIS
+        // échouer à cause d'un canal déjà fermé ou d'un broker injoignable -> on logue en warning.
+        try
+        {
+            if (_channel is not null && _consumerTag is not null)
+            {
+                await _channel.BasicCancelAsync(_consumerTag, cancellationToken: cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Échec de l'annulation du consommateur RabbitMQ lors de l'arrêt.");
+        }
+
         if (_channel is not null) await _channel.DisposeAsync();
         if (_connection is not null) await _connection.DisposeAsync();
         await base.StopAsync(cancellationToken);

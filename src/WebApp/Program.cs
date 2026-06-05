@@ -23,19 +23,39 @@ var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
-// --- Résolution des URLs des APIs via le service discovery d'Aspire ---
-// Quand le système tourne sous Aspire (AppHost), chaque service est injecté dans
-// la configuration sous une clé "services:<nom>:<scheme>:<index>". On lit cette clé
-// pour connaître l'adresse réelle du backend, sans la coder en dur.
-// La valeur après "??" est un repli (fallback) utile pour un lancement isolé sans Aspire.
-var catalogApiUrl = builder.Configuration["services:catalog-api:https:0"]
-    ?? "https://localhost:7117";
-var basketApiUrl = builder.Configuration["services:basket-api:https:0"]
-    ?? "https://localhost:7225";
-var orderingApiUrl = builder.Configuration["services:ordering-api:https:0"]
-    ?? "https://localhost:7102";
-var identityApiUrl = builder.Configuration["services:identity-api:https:0"]
-    ?? "https://localhost:7267";
+// --- Résolution des URLs des APIs depuis la configuration WASM (appsettings) ---
+// POURQUOI ce changement ?
+//   Avant, on lisait les clés de service discovery d'Aspire ("services:<nom>:<scheme>:0").
+//   Problème : ces clés ne sont injectées que dans le PROCESS WebApp.Server (côté serveur)
+//   et n'atteignent JAMAIS le bundle WASM qui s'exécute dans le navigateur. Seul le
+//   fallback "localhost" était donc utilisé -> en prod, le navigateur de l'utilisateur
+//   tapait localhost = panne totale.
+//
+// MAINTENANT, on lit la section "Backend" de IConfiguration. Celle-ci provient de
+//   wwwroot/appsettings.json (URLs publiques, templatisées au déploiement) écrasé en
+//   dev par wwwroot/appsettings.Development.json (URLs localhost). Ces fichiers sont
+//   bien chargés DANS le navigateur par Blazor WASM, donc cette config est fiable
+//   aussi bien en prod qu'en dev local.
+//
+// fail fast : on lève une exception explicite si une URL manque ou contient encore un
+//   placeholder "REPLACE_" (prod mal templatisée). Mieux vaut planter au démarrage avec
+//   un message clair que laisser l'app appeler une URL invalide.
+static string RequireBackendUrl(WebAssemblyHostBuilder builder, string key)
+{
+    var url = builder.Configuration[$"Backend:{key}"];
+    if (string.IsNullOrWhiteSpace(url) || url.Contains("REPLACE_", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            $"Configuration backend manquante ou non templatisée pour 'Backend:{key}'. " +
+            "Vérifie wwwroot/appsettings.json (prod) ou wwwroot/appsettings.Development.json (dev).");
+    }
+    return url;
+}
+
+var catalogApiUrl = RequireBackendUrl(builder, "CatalogApi");
+var basketApiUrl = RequireBackendUrl(builder, "BasketApi");
+var orderingApiUrl = RequireBackendUrl(builder, "OrderingApi");
+var identityApiUrl = RequireBackendUrl(builder, "IdentityAuthority");
 
 // --- Clients HTTP nommés avec jeton d'accès attaché automatiquement ---
 // Pour chaque API protégée, on enregistre un HttpClient nommé. Le point clé est
@@ -79,8 +99,9 @@ builder.Services.AddScoped<BuyerIdProvider>();
 // code d'autorisation, puis l'échange (avec le verifier PKCE) contre un jeton d'accès.
 builder.Services.AddOidcAuthentication(options =>
 {
-    // Authority = l'émetteur OIDC. Récupéré via service discovery pour que l'issuer
-    // vu ici corresponde exactement à celui que les APIs valident côté serveur.
+    // Authority = l'émetteur OIDC. Lu depuis "Backend:IdentityAuthority" (appsettings WASM)
+    // pour que l'issuer vu ici corresponde exactement à celui que les APIs valident côté
+    // serveur. En prod, cette URL doit être l'autorité Identity PUBLIQUE.
     options.ProviderOptions.Authority = identityApiUrl;
     options.ProviderOptions.ClientId = "webapp";        // identifiant client déclaré dans Identity.API
     options.ProviderOptions.ResponseType = "code";      // Authorization Code Flow (+ PKCE)

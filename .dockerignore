@@ -1,0 +1,40 @@
+# ============================================================================
+# .dockerignore — racine du dépôt eShop
+# ----------------------------------------------------------------------------
+# Le CONTEXTE de build de tous les Dockerfiles est la RACINE du dépôt (voir les
+# Dockerfiles par service). Ce fichier réduit le contexte envoyé au démon Docker :
+#   - accélère le build (moins d'octets à transférer) ;
+#   - améliore le cache de couches (les artefacts locaux ne « polluent » pas le
+#     contexte et n'invalident pas les couches à chaque recompilation locale) ;
+#   - évite d'embarquer des fichiers sensibles ou inutiles dans l'image.
+# ============================================================================
+
+# --- Artefacts de compilation .NET (régénérés par `dotnet publish` dans l'image) ---
+**/bin
+**/obj
+
+# --- Métadonnées Git et CI (inutiles à l'exécution) ---
+.git
+.gitignore
+.github
+
+# --- Projets de tests : jamais publiés dans une image de service ---
+tests
+
+# --- Fichiers utilisateur / IDE ---
+**/*.user
+.vs
+.vscode
+
+# --- Configuration de DÉVELOPPEMENT : ne doit JAMAIS partir en image de prod.
+#     En K8s, la configuration vient des ConfigMaps/Secrets et des variables
+#     d'environnement, pas d'un appsettings.Development.json embarqué. ---
+**/appsettings.Development.json
+
+# --- Artefacts Docker (pas besoin de se copier soi-même dans le contexte) ---
+**/Dockerfile
+**/.dockerignore
+docker-compose*.yml
+
+# --- Divers ---
+**/*.md
