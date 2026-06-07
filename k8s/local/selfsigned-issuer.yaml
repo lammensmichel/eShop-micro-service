@@ -1,0 +1,16 @@
+# Émetteur cert-manager AUTO-SIGNÉ — réservé au cluster LOCAL (minikube).
+# En prod on utilise letsencrypt-prod (config/cluster-issuer.yaml) qui délivre des
+# certificats VALIDES. En local, il n'y a pas de domaine public : on génère donc des
+# certificats auto-signés. Le navigateur affichera un avertissement (« non sécurisé »)
+# qu'il faudra accepter une fois par hôte (app. et id.). Côté services, les APIs
+# acceptent ce certificat via Identity:DangerousAcceptAnyServerCertificate=true
+# (injecté par start-local.sh) — STRICTEMENT local.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+  labels:
+    app.kubernetes.io/part-of: eshop
+    app.kubernetes.io/name: selfsigned-issuer
+spec:
+  selfSigned: {}

@@ -68,6 +68,11 @@ spec:
                 configMapKeyRef:
                   name: eshop-config
                   key: Identity__Url
+            - name: Identity__MetadataAddress
+              valueFrom:
+                configMapKeyRef:
+                  name: eshop-config
+                  key: Identity__MetadataAddress
             - name: Identity__RequireHttpsMetadata
               valueFrom:
                 configMapKeyRef:

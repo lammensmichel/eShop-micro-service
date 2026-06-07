@@ -61,6 +61,18 @@ builder.Services
         options.Events.RaiseErrorEvents = true;
         options.Events.RaiseFailureEvents = true;
         options.Events.RaiseSuccessEvents = true;
+
+        // ISSUER FIXE (optionnel) : par défaut IdentityServer dérive l'issuer de l'URL de la
+        // requête. Or en Kubernetes, Identity est appelé par DEUX chemins : le NAVIGATEUR via
+        // l'URL publique (https://id.<domaine>) et les APIs IN-CLUSTER via le DNS interne
+        // (http://identity-api:8080) pour récupérer les métadonnées OIDC sans dépendre de
+        // l'Ingress (les pods ne peuvent pas toujours joindre l'URL publique). Pour que
+        // l'issuer soit IDENTIQUE dans les deux cas (sinon la validation des jetons échoue),
+        // on le FIXE via "Identity:IssuerUri" quand la clé est fournie. En dev local (Aspire),
+        // la clé est absente -> comportement d'origine (issuer dérivé) inchangé.
+        var issuerUri = builder.Configuration["Identity:IssuerUri"];
+        if (!string.IsNullOrEmpty(issuerUri))
+            options.IssuerUri = issuerUri;
     })
     // Chargement "en mémoire" de la configuration définie dans Config.cs :
     .AddInMemoryIdentityResources(Config.IdentityResources)  // scopes d'identité (openid, profile, roles...).

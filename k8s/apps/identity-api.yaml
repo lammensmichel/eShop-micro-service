@@ -63,6 +63,11 @@ spec:
                 configMapKeyRef:
                   name: eshop-config
                   key: Identity__WebAppUrl
+            - name: Identity__IssuerUri
+              valueFrom:
+                configMapKeyRef:
+                  name: eshop-config
+                  key: Identity__IssuerUri
             - name: Identity__SeedDemoUsers
               valueFrom:
                 configMapKeyRef:

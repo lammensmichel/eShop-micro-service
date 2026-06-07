@@ -14,5 +14,13 @@ data:
   Identity__RequireHttpsMetadata: "true"
   # Valeurs dérivées du domaine, consommées en variables d'env par les apps.
   Cors__AllowedOrigins__0: "https://app.__DOMAIN__"
+  # Authority (issuer attendu des jetons) = URL PUBLIQUE d'Identity.
   Identity__Url: "https://id.__DOMAIN__"
   Identity__WebAppUrl: "https://app.__DOMAIN__"
+  # Issuer FIXE émis par Identity (doit == Identity__Url) : garantit que l'issuer est le
+  # même que les métadonnées soient récupérées via l'URL publique (navigateur) ou interne (APIs).
+  Identity__IssuerUri: "https://id.__DOMAIN__"
+  # Adresse INTERNE des métadonnées OIDC pour les APIs (DNS du Service, pas l'Ingress) :
+  # évite que les pods doivent joindre l'URL publique. Active automatiquement
+  # RequireHttpsMetadata=false pour cette adresse interne (réseau cluster de confiance).
+  Identity__MetadataAddress: "http://identity-api:8080/.well-known/openid-configuration"

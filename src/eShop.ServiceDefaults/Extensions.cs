@@ -111,6 +111,37 @@ public static class Extensions
                 //     config/env (clé "Identity__RequireHttpsMetadata=true") pour empêcher toute
                 //     récupération de métadonnées en clair (sécurité).
                 options.RequireHttpsMetadata = builder.Configuration.GetValue<bool>("Identity:RequireHttpsMetadata", false);
+                // METADATA ADDRESS interne (optionnel) : par défaut, le handler télécharge la
+                // config OIDC depuis Authority (l'URL publique). En Kubernetes, le pod ne peut
+                // pas forcément joindre cette URL publique (hairpin) -> on lui donne l'adresse
+                // INTERNE des métadonnées via le DNS du Service ("Identity:MetadataAddress" =
+                // http://identity-api:8080/.well-known/openid-configuration). L'Authority reste
+                // l'URL PUBLIQUE (pour valider l'issuer du jeton), mais le téléchargement se fait
+                // en interne. Couplé à IssuerUri fixe côté Identity, les deux issuers coïncident.
+                // En dev local (Aspire) : clé absente -> Authority sert aussi de source (inchangé).
+                var metadataAddress = builder.Configuration["Identity:MetadataAddress"];
+                if (!string.IsNullOrEmpty(metadataAddress))
+                {
+                    options.MetadataAddress = metadataAddress;
+                    // Métadonnées récupérées en HTTP sur le réseau interne du cluster (de confiance) :
+                    // on n'exige pas HTTPS pour cette adresse interne.
+                    options.RequireHttpsMetadata = false;
+                }
+                // ⚠️ STRICTEMENT LOCAL — accepter un certificat TLS auto-signé pour la
+                // récupération des métadonnées OIDC (backchannel). En cluster LOCAL (minikube,
+                // self-signed), Identity est servi en HTTPS avec un certificat NON approuvé par
+                // l'autorité système : sans cela, le handler JWT échouerait à télécharger
+                // /.well-known/openid-configuration et REJETTERAIT tous les jetons. Gardé par la
+                // clé "Identity:DangerousAcceptAnyServerCertificate" (défaut false). NE JAMAIS
+                // l'activer en VRAIE prod (faille MITM) : en prod, le TLS est valide (Let's Encrypt).
+                if (builder.Configuration.GetValue<bool>("Identity:DangerousAcceptAnyServerCertificate", false))
+                {
+                    options.BackchannelHttpHandler = new HttpClientHandler
+                    {
+                        ServerCertificateCustomValidationCallback =
+                            HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                    };
+                }
                 // Aucune ApiResource n'est définie dans Identity.API (uniquement des ApiScopes),
                 // donc le jeton ne porte pas de claim "aud" -> on ne valide pas l'audience.
                 options.TokenValidationParameters.ValidateAudience = false;
