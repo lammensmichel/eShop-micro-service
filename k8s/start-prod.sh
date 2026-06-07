@@ -213,6 +213,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5bis. Secret eshop-signing-key — clé RSA de signature des jetons, PARTAGÉE par toutes
+#       les répliques d'Identity (montée en lecture seule). Générée une seule fois.
+# ---------------------------------------------------------------------------
+log "Secret eshop-signing-key (clé de signature des jetons)"
+if kc get secret eshop-signing-key >/dev/null 2>&1; then
+  ok "eshop-signing-key existe déjà — conservé (les jetons existants restent valides)."
+else
+  openssl genrsa 2048 > /tmp/eshop-signing.key 2>/dev/null
+  kc create secret generic eshop-signing-key --from-file=signing.key=/tmp/eshop-signing.key
+  kc label secret eshop-signing-key app.kubernetes.io/part-of=eshop --overwrite >/dev/null
+  rm -f /tmp/eshop-signing.key
+  ok "eshop-signing-key créé (clé RSA générée)"
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Secret eshop-connstrings — composé à partir des mots de passe (chaînes EXACTES du contrat)
 # ---------------------------------------------------------------------------
 log "Secret eshop-connstrings (composé)"

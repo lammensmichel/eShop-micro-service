@@ -87,6 +87,10 @@ spec:
             # Les migrations sont jouées par un Job dédié, jamais au démarrage.
             - name: RunMigrationsAtStartup
               value: "false"
+            # Clé de signature des jetons : fichier monté depuis le Secret eshop-signing-key
+            # (partagée par toutes les répliques ; compatible readOnlyRootFilesystem).
+            - name: Identity__SigningKeyFile
+              value: /app/keys/signing.key
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -125,9 +129,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            # Clé de signature RSA (PEM) montée en lecture seule depuis le Secret.
+            - name: signing-key
+              mountPath: /app/keys
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: signing-key
+          secret:
+            secretName: eshop-signing-key
+            items:
+              - key: signing.key
+                path: signing.key
 ---
 apiVersion: v1
 kind: Service

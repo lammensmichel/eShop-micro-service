@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using Microsoft.IdentityModel.Tokens;
 using Identity.API;
 using Identity.API.Data;
 using Identity.API.Models;
@@ -54,7 +56,7 @@ builder.Services
 
 // Duende IdentityServer : la couche OpenID Connect / OAuth 2.0 (émission des jetons).
 // Elle s'appuie sur Identity ci-dessus pour authentifier réellement les utilisateurs.
-builder.Services
+var identityServer = builder.Services
     .AddIdentityServer(options =>
     {
         // Activation de tous les évènements (succès/échec/erreur) : utile pour le diagnostic.
@@ -73,6 +75,15 @@ builder.Services
         var issuerUri = builder.Configuration["Identity:IssuerUri"];
         if (!string.IsNullOrEmpty(issuerUri))
             options.IssuerUri = issuerUri;
+
+        // Si une clé de signature STATIQUE est fournie (prod/k8s, montée depuis un Secret),
+        // on DÉSACTIVE la gestion automatique des clés de Duende. Par défaut, Duende GÉNÈRE
+        // et ÉCRIT ses clés de signature sur disque (dossier keys/) : impossible avec un
+        // système de fichiers en LECTURE SEULE (securityContext durci), et chaque réplique
+        // aurait sa propre clé (jetons incohérents). En dev local (Aspire) : clé absente
+        // -> gestion auto par défaut conservée (le dossier keys/ y est inscriptible).
+        if (!string.IsNullOrEmpty(builder.Configuration["Identity:SigningKeyFile"]))
+            options.KeyManagement.Enabled = false;
     })
     // Chargement "en mémoire" de la configuration définie dans Config.cs :
     .AddInMemoryIdentityResources(Config.IdentityResources)  // scopes d'identité (openid, profile, roles...).
@@ -83,6 +94,20 @@ builder.Services
     .AddInMemoryClients(Config.Clients(builder.Configuration)) // applications autorisées (le front "webapp").
     .AddAspNetIdentity<ApplicationUser>()                    // relie IdentityServer au store Identity.
     .AddProfileService<CustomProfileService>();              // injecte les rôles dans les jetons (cf. CustomProfileService).
+
+// CLÉ DE SIGNATURE STATIQUE (prod/k8s) : chargée depuis un fichier monté (Secret Kubernetes),
+// donc PARTAGÉE par toutes les répliques d'Identity et compatible avec un système de fichiers
+// en lecture seule. Sans elle (dev local Aspire), Duende gère ses clés automatiquement.
+// Le fichier est une clé privée RSA au format PEM ; on signe en RS256.
+var signingKeyFile = builder.Configuration["Identity:SigningKeyFile"];
+if (!string.IsNullOrEmpty(signingKeyFile))
+{
+    var rsa = RSA.Create();
+    rsa.ImportFromPem(File.ReadAllText(signingKeyFile));
+    identityServer.AddSigningCredential(
+        new RsaSecurityKey(rsa) { KeyId = "eshop-signing-key" },
+        SecurityAlgorithms.RsaSha256);
+}
 
 // Razor Pages : sert les écrans UI (login, logout, erreur) du serveur d'identité.
 builder.Services.AddRazorPages();
